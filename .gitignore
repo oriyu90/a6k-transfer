@@ -1,0 +1,15 @@
+# Gradle / Android
+.gradle/
+/build/
+/app/build/
+local.properties
+*.iml
+/.idea/
+.kotlin/
+
+# Signing keys — NEVER commit (rule 7: keystore lives in common-rules-document)
+*.jks
+*.keystore
+
+# macOS
+.DS_Store

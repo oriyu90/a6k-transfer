@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">α6k転送</string>
+    <string name="tab_transfer">転送</string>
+    <string name="tab_connect">接続</string>
+    <string name="tab_diag">診断</string>
+    <string name="tab_settings">設定</string>
+
+    <string name="connect_step1">1. カメラAPに接続</string>
+    <string name="status">状態: %1$s</string>
+    <string name="status_not_connected">未接続</string>
+    <string name="bound_as">バインド中: %1$s</string>
+    <string name="ssid">SSID</string>
+    <string name="passphrase">パスフレーズ（カメラ画面の表示）</string>
+    <string name="connect_bind">接続＋バインド</string>
+    <string name="release">解放</string>
+    <string name="connect_step2">2. カメラを探索</string>
+    <string name="discover_hint">カメラで「スマートフォンから選ぶ」→「表示中」にしてから実行</string>
+    <string name="discover">カメラ探索</string>
+    <string name="location">LOCATION: %1$s</string>
+    <string name="location_unknown">（未確定）</string>
+    <string name="howto_title">手順</string>
+    <string name="howto_1">1. カメラ：MENU→スマートフォン転送→スマートフォンから選ぶ→「表示中」</string>
+    <string name="howto_2">2. 上の「接続＋バインド」（初回のみ承認ダイアログが出ます）</string>
+    <string name="howto_3">3. 「カメラ探索」→ LOCATION確定後、「転送」タブへ</string>
+    <string name="connecting">接続中…</string>
+    <string name="discovering">カメラ探索中（最大20秒）…</string>
+    <string name="discovered">カメラ発見</string>
+    <string name="discover_fail">見つからず。カメラの「表示中」画面を確認してください</string>
+
+    <string name="gallery_need_connect">「接続」タブでカメラ探索まで完了してください</string>
+    <string name="load_list">一覧読込</string>
+    <string name="loading_list">一覧取得中…</string>
+    <string name="days_photos">%1$d日・%2$d件</string>
+    <string name="no_photos">写真なし</string>
+    <string name="timeout">タイムアウト</string>
+    <string name="failed">失敗: %1$s</string>
+    <string name="select_all">全選択</string>
+    <string name="clear_selection">全解除</string>
+    <string name="transfer_selected">選択を転送 (%1$d)</string>
+    <string name="transfer_done">完了: %1$d/%2$d件をギャラリーに保存</string>
+    <string name="saved_badge">保存済</string>
+
+    <string name="settings_language">言語 / Language</string>
+    <string name="lang_system">システムに従う</string>
+    <string name="lang_ja">日本語</string>
+    <string name="lang_en">English</string>
+    <string name="settings_note">すぐに反映されます。診断タブは日本語のままです。</string>
+
+    <string name="theme_title">テーマ</string>
+    <string name="theme_system">システム</string>
+    <string name="theme_light">ライト</string>
+    <string name="theme_dark">ダーク</string>
+    <string name="theme_note">すぐに反映されます。</string>
+
+    <string name="model_title">カメラ機種</string>
+    <string name="model_auto">自動</string>
+    <string name="model_a6000">α6000（検証済み）</string>
+    <string name="model_a6100">α6100以降（実験的）</string>
+    <string name="model_note">α6100以降は予測実装で未検証です。自動はα6000を優先して試します。</string>
+    <string name="remote_api_only">Camera Remote APIは見つかりましたがDLNAサーバーがありません。このAPI経由の転送は未対応です。診断タブで確認できます。</string>
+    <string name="discover_need_bind">先に「接続＋バインド」してください</string>
+</resources>
