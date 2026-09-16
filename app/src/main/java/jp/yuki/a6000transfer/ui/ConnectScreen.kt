@@ -51,6 +51,7 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
     var status by remember { mutableStateOf(ctx.getString(R.string.status_not_connected)) }
     var discovering by remember { mutableStateOf(false) }
     var remoteApi by remember { mutableStateOf<String?>(null) }
+    var wasBound by remember { mutableStateOf(false) }
     val bound by appState.boundSsid.collectAsState()
     val location by appState.location.collectAsState()
     val model by appState.cameraModel.collectAsState()
@@ -62,9 +63,12 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
     LaunchedEffect(Unit) {
         val saved = prefs.getString("model", CameraProfile.AUTO) ?: CameraProfile.AUTO
         appState.setModel(saved)
-        // バインド喪失（カメラAP切断等）をステータスに反映
-        WifiBinder.onLostListener = {
-            appState.setBound(null)
+    }
+
+    // バインド喪失（カメラAP切断等）をステータスに反映。成功表示中の喪失のみ戻す
+    LaunchedEffect(bound) {
+        if (bound == null && wasBound && !busy && !discovering) {
+            wasBound = false
             status = ctx.getString(R.string.status_not_connected)
         }
     }
@@ -83,6 +87,7 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
                     is BindResult.Ok -> {
                         status = ctx.getString(R.string.bound_as, res.ssid)
                         appState.setBound(res.ssid)
+                        wasBound = true
                     }
                     is BindResult.Ng -> {
                         status = ctx.getString(R.string.failed, res.reason)
@@ -203,6 +208,7 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
                     OutlinedButton(onClick = {
                         WifiBinder.unbind(ctx)
                         appState.setBound(null)
+                        wasBound = false
                         status = ctx.getString(R.string.status_not_connected)
                     }) { Text(stringResource(R.string.release)) }
                 }

@@ -39,6 +39,7 @@
     <string name="clear_selection">Clear</string>
     <string name="transfer_selected">Transfer selected (%1$d)</string>
     <string name="transfer_done">Done: saved %1$d/%2$d to gallery</string>
+    <string name="transfer_aborted">Aborted: connection may be lost (%1$d/%2$d saved). Reconnect and retry.</string>
     <string name="saved_badge">Saved</string>
 
     <string name="settings_language">Language</string>

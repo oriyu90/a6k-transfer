@@ -79,6 +79,8 @@ class MainActivity : AppCompatActivity() {
             val appState = remember { AppState() }
             var tab by remember { mutableIntStateOf(1) }
             var themeMode by remember { mutableStateOf(savedThemeMode(this@MainActivity)) }
+            // バインド喪失は画面に依存せずAppStateへ集約（Contextを捕まえない）
+            jp.yuki.a6000transfer.sony.WifiBinder.onLostListener = { appState.setBound(null) }
             A6000Theme(themeMode) {
                 Surface(Modifier.fillMaxSize()) {
                     Scaffold(

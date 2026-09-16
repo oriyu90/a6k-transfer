@@ -39,6 +39,7 @@
     <string name="clear_selection">全解除</string>
     <string name="transfer_selected">選択を転送 (%1$d)</string>
     <string name="transfer_done">完了: %1$d/%2$d件をギャラリーに保存</string>
+    <string name="transfer_aborted">中断: 接続が切れた可能性があります（%1$d/%2$d件保存）。再接続して再試行してください</string>
     <string name="saved_badge">保存済</string>
 
     <string name="settings_language">言語 / Language</string>

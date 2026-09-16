@@ -8,6 +8,7 @@ import android.net.NetworkRequest
 import android.net.wifi.WifiNetworkSpecifier
 import android.os.Build
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 
 sealed interface BindResult {
@@ -18,6 +19,11 @@ sealed interface BindResult {
 /**
  * 指定SSIDのWi-Fiにアプリの通信をバインドする（Android 10+）。
  * カメラAPのようなインターネットなしAPでも切断されずに通信できる。
+ *
+ * 世代ガード: 要求ごとに世代番号を進め、旧い要求のコールバックは無視する。
+ * これにより (1)タイムアウト後の遅延onAvailableによる意図せぬバインド、
+ * (2)タイムアウト解除と承認ダイアログ表示中の競合によるシステムエラー表示、
+ * をどちらも起こさない。旧コールバックは失効後に自らunregisterする。
  */
 object WifiBinder {
     @Volatile
@@ -26,8 +32,9 @@ object WifiBinder {
 
     private var requestedNetwork: Network? = null
     private var activeCallback: ConnectivityManager.NetworkCallback? = null
+    private val generation = AtomicInteger(0)
 
-    /** バインド喪失時の通知（UIの表示muを戻す用。任意） */
+    /** バインド喪失時の通知（AppStateのみ触ること。Contextを捕まえない） */
     var onLostListener: (() -> Unit)? = null
 
     /** 要求を登録し、後でunregisterするためのコールバックを返す */
@@ -66,8 +73,24 @@ object WifiBinder {
             .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .setNetworkSpecifier(spec)
             .build()
+        // 新しい要求で旧世代を失効させる
+        val gen = generation.incrementAndGet()
         val nc = object : ConnectivityManager.NetworkCallback() {
+            private fun isStale(): Boolean = gen != generation.get()
+
+            private fun unregisterQuietly() {
+                try {
+                    cm.unregisterNetworkCallback(this)
+                } catch (_: Exception) {
+                }
+            }
+
             override fun onAvailable(network: Network) {
+                if (isStale()) {
+                    // 失効済み要求の遅延接続。バインドせず静かに後始末する
+                    unregisterQuietly()
+                    return
+                }
                 requestedNetwork = network
                 boundSsid = ssid
                 try {
@@ -79,6 +102,10 @@ object WifiBinder {
             }
 
             override fun onUnavailable() {
+                if (isStale()) {
+                    unregisterQuietly()
+                    return
+                }
                 callback(BindResult.Ng("ネットワーク要求が利用不可（SSID/パスフレーズを確認）"))
             }
 
@@ -101,13 +128,17 @@ object WifiBinder {
         }
         try {
             cm.requestNetwork(req, nc)
-            activeCallback?.let {
+            // 旧コールバックの置換。接続済み（承認済み）のものだけ即時解除し、
+            // 承認待ちの可能性があるものは失効扱いにして自己後始末に任せる
+            // （表示中の承認ダイアログを殺すとシステムエラー表示が出るため）
+            val old = activeCallback
+            activeCallback = nc
+            if (old != null && boundSsid != null) {
                 try {
-                    cm.unregisterNetworkCallback(it)
+                    cm.unregisterNetworkCallback(old)
                 } catch (_: Exception) {
                 }
             }
-            activeCallback = nc
             return nc
         } catch (e: Exception) {
             callback(BindResult.Ng("request失敗: ${e.message}"))
@@ -115,7 +146,7 @@ object WifiBinder {
         }
     }
 
-    /** 45秒タイムアウト付き。タイムアウト時は要求を解除してNgを返す */
+    /** 45秒タイムアウト付き。タイムアウト時はNgを返すだけ（解除は世代ガードに任せる） */
     suspend fun requestBindAwait(context: Context, ssid: String, passphrase: String): BindResult {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         return try {
@@ -125,9 +156,12 @@ object WifiBinder {
                         if (cont.isActive) cont.resume(it)
                     }
                     cont.invokeOnCancellation {
-                        nc?.let {
+                        // 失効だけ行いunregisterはしない。承認ダイアログ表示中の
+                        // unregisterはシステムエラー表示を誘発するため、自己後始末に任せる
+                        generation.incrementAndGet()
+                        if (nc != null && nc !== activeCallback) {
                             try {
-                                cm.unregisterNetworkCallback(it)
+                                cm.unregisterNetworkCallback(nc)
                             } catch (_: Exception) {
                             }
                         }
@@ -135,19 +169,21 @@ object WifiBinder {
                 }
             }
         } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
-            // タイムアウト後もコールバックが残ると、遅延onAvailableで意図せず
-            // bindProcessToNetworkされるため必ず解除する
-            try {
-                unbind(context)
-            } catch (_: Exception) {
-            }
+            // 失効だけ行う。承認ダイアログ表示中のunregisterは避け、
+            // 遅延onAvailable/onUnavailableは世代ガードが無害化する
+            generation.incrementAndGet()
             BindResult.Ng("タイムアウト（45秒）。カメラのAPが見つからないか承認待ちの可能性。解放して再試行してください")
         }
     }
 
+    /** 明示的な解放。承認ダイアログ表示中の呼び出しはシステムが確認表示を出す場合がある */
     fun unbind(context: Context) {
+        generation.incrementAndGet()
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        cm.bindProcessToNetwork(null)
+        try {
+            cm.bindProcessToNetwork(null)
+        } catch (_: Exception) {
+        }
         activeCallback?.let {
             try {
                 cm.unregisterNetworkCallback(it)

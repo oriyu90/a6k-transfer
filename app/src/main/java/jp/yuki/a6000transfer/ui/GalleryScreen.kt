@@ -118,7 +118,10 @@ fun GalleryScreen(ctx: Context, appState: AppState) {
         scope.launch {
             try {
                 var ok = 0
+                var consecutiveFail = 0
+                var aborted = false
                 selectedPhotos.forEachIndexed { i, p ->
+                    if (aborted) return@forEachIndexed
                     progressText = "${i + 1}/${selectedPhotos.size}: ${p.title}"
                     progress = i.toFloat() / selectedPhotos.size
                     try {
@@ -127,12 +130,23 @@ fun GalleryScreen(ctx: Context, appState: AppState) {
                         if (uri != null) {
                             ok++
                             doneIds[p.id] = true
+                            consecutiveFail = 0
+                        } else {
+                            consecutiveFail++
                         }
                     } catch (_: Exception) {
+                        consecutiveFail++
+                    }
+                    // 変なタイミングのWi-Fi切断では全件失敗が続く。3連続失敗で打ち切り復帰する
+                    if (consecutiveFail >= 3) {
+                        aborted = true
+                        progressText = ctx.getString(R.string.transfer_aborted, ok, selectedPhotos.size)
                     }
                 }
-                progress = 1f
-                progressText = ctx.getString(R.string.transfer_done, ok, selectedPhotos.size)
+                if (!aborted) {
+                    progress = 1f
+                    progressText = ctx.getString(R.string.transfer_done, ok, selectedPhotos.size)
+                }
                 selected.clear()
             } finally {
                 transferring = false
