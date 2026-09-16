@@ -36,7 +36,7 @@ object DlnaRepository {
     /** サムネイル同時取得の上限（大量写真時のソケット枯渇防止） */
     private val thumbSlots = kotlinx.coroutines.sync.Semaphore(4)
 
-    /** ギャラリー登録済みタイトル一覧（重複転送の事前照合用） */
+    /** ギャラリー登録済みタイトル一覧（重複転送の事前照合用。巨大ギャラリー対策で上限あり） */
     suspend fun existingTitles(context: Context): Set<String> = withContext(Dispatchers.IO) {
         val out = mutableSetOf<String>()
         try {
@@ -46,7 +46,10 @@ object DlnaRepository {
                 null, null, null,
             )?.use { c ->
                 val idx = c.getColumnIndex(android.provider.MediaStore.Images.Media.DISPLAY_NAME)
-                while (c.moveToNext()) out.add(c.getString(idx) ?: "")
+                while (c.moveToNext()) {
+                    out.add(c.getString(idx) ?: "")
+                    if (out.size >= 10000) break
+                }
             }
         } catch (_: Exception) {
         }
@@ -87,9 +90,10 @@ object DlnaRepository {
             // 2. M-SEARCHでSTを順に試す
             if (location == null) {
                 val sts = profiles.flatMap { it.ssdpSt }.distinct()
+                val gateways = profiles.flatMap { it.gateways }.distinct()
                 for (st in sts) {
                     val hits = try {
-                        SsdpDiscovery.discover(context, st, 6000)
+                        SsdpDiscovery.discover(context, st, 6000, gateways)
                     } catch (_: Exception) {
                         emptyList()
                     }
@@ -145,16 +149,17 @@ object DlnaRepository {
         }
     }
 
-    /** 全ページ取得 */
+    /** 全ページ取得（サーバー異常時の無限ループ防止に上限あり） */
     suspend fun browseAll(control: String, objectId: String): List<DlnaItem> {
         val out = mutableListOf<DlnaItem>()
         var start = 0
-        while (true) {
+        repeat(20) {
             val page = DlnaClient.browseItems(control, SERVICE_TYPE, objectId, 100, start)
             if (page.total < 0) throw IllegalStateException("Browse失敗 oid=$objectId")
             out.addAll(page.items)
-            if (out.size >= page.total || page.items.isEmpty()) break
+            if (out.size >= page.total || page.items.isEmpty()) return out
             start += page.items.size
+            if (out.size >= 2000) return out
         }
         return out
     }
@@ -187,8 +192,27 @@ object DlnaRepository {
 
     fun cacheFile(context: Context, kind: String, title: String): File {
         val dir = File(context.cacheDir, "a6000/$kind").apply { mkdirs() }
+        trimCacheDir(dir, maxFiles = 300, maxBytes = 200L * 1024 * 1024)
         val safe = title.ifBlank { "photo" }.replace(Regex("[^A-Za-z0-9._-]"), "_").take(80)
         return File(dir, safe)
+    }
+
+    /** キャッシュ肥大化防止：ファイル数・合計サイズの上限を超えたら古いものから削除 */
+    private fun trimCacheDir(dir: File, maxFiles: Int, maxBytes: Long) {
+        try {
+            val files = dir.listFiles()?.sortedBy { it.lastModified() } ?: return
+            var total = files.sumOf { it.length() }
+            var count = files.size
+            for (f in files) {
+                if (count <= maxFiles && total <= maxBytes) break
+                val len = f.length()
+                if (f.delete()) {
+                    count--
+                    total -= len
+                }
+            }
+        } catch (_: Exception) {
+        }
     }
 
     /** サムネイル用に縮小デコード。キャッシュ済みファイルを使い回す */

@@ -27,6 +27,9 @@ object WifiBinder {
     private var requestedNetwork: Network? = null
     private var activeCallback: ConnectivityManager.NetworkCallback? = null
 
+    /** バインド喪失時の通知（UIの表示muを戻す用。任意） */
+    var onLostListener: (() -> Unit)? = null
+
     /** 要求を登録し、後でunregisterするためのコールバックを返す */
     fun requestBind(
         context: Context,
@@ -38,11 +41,26 @@ object WifiBinder {
             callback(BindResult.Ng("Android 10未満は非対応"))
             return null
         }
+        // setWpa2Passphraseは空文字・非ASCIIでIllegalArgumentExceptionを投げる。
+        // 呼び出し側コルーチンをクラッシュさせないためここで検証する
+        if (ssid.isBlank()) {
+            callback(BindResult.Ng("SSIDが空です"))
+            return null
+        }
+        if (passphrase.isEmpty() || passphrase.any { it.code !in 0x20..0x7E }) {
+            callback(BindResult.Ng("パスフレーズはASCII 8〜63文字で入力してください"))
+            return null
+        }
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val spec = WifiNetworkSpecifier.Builder()
-            .setSsid(ssid)
-            .setWpa2Passphrase(passphrase)
-            .build()
+        val spec = try {
+            WifiNetworkSpecifier.Builder()
+                .setSsid(ssid)
+                .setWpa2Passphrase(passphrase)
+                .build()
+        } catch (e: IllegalArgumentException) {
+            callback(BindResult.Ng("パスフレーズ不正: ${e.message}"))
+            return null
+        }
         val req = NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
             .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -68,6 +86,16 @@ object WifiBinder {
                 if (requestedNetwork == network) {
                     requestedNetwork = null
                     boundSsid = null
+                    // NetworkCallbackはbinderスレッドで呼ばれる。Compose state更新のためmainへ配送
+                    try {
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            try {
+                                onLostListener?.invoke()
+                            } catch (_: Exception) {
+                            }
+                        }
+                    } catch (_: Exception) {
+                    }
                 }
             }
         }
@@ -107,6 +135,12 @@ object WifiBinder {
                 }
             }
         } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+            // タイムアウト後もコールバックが残ると、遅延onAvailableで意図せず
+            // bindProcessToNetworkされるため必ず解除する
+            try {
+                unbind(context)
+            } catch (_: Exception) {
+            }
             BindResult.Ng("タイムアウト（45秒）。カメラのAPが見つからないか承認待ちの可能性。解放して再試行してください")
         }
     }

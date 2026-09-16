@@ -61,6 +61,7 @@ object SsdpDiscovery {
         context: Context,
         st: String = SONY_ST,
         waitMs: Long = 6000,
+        unicastTargets: List<String> = listOf("10.0.0.1"),
     ): List<SsdpResult> = withContext(Dispatchers.IO) {
         val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         val lock = wifi.createMulticastLock("a6000-ssdp").apply {
@@ -97,11 +98,13 @@ object SsdpDiscovery {
                     repeat(3) {
                         // マルチキャスト宛
                         sock.send(DatagramPacket(out, out.size, group, MULTICAST_PORT))
-                        // カメラ既定GWへのユニキャスト宛（応答率向上）
-                        try {
-                            val gw = InetAddress.getByName("10.0.0.1")
-                            sock.send(DatagramPacket(out, out.size, gw, MULTICAST_PORT))
-                        } catch (_: Exception) {
+                        // カメラGW候補へのユニキャスト宛（応答率向上）
+                        for (target in unicastTargets) {
+                            try {
+                                val gw = InetAddress.getByName(target)
+                                sock.send(DatagramPacket(out, out.size, gw, MULTICAST_PORT))
+                            } catch (_: Exception) {
+                            }
                         }
                     }
                     val found = linkedMapOf<String, SsdpResult>()

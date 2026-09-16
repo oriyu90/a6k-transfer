@@ -20,6 +20,25 @@ data class DlnaItem(
 object DlnaClient {
     private const val TIMEOUT_MS = 10000
 
+    /** 応答本文の上限（巨大応答でのメモリ枯渇防止） */
+    private const val MAX_BODY_CHARS = 4 * 1024 * 1024
+
+    private fun readCapped(conn: HttpURLConnection): Pair<Int, String> {
+        val code = conn.responseCode
+        val s = if (code in 200..299) conn.inputStream else conn.errorStream
+        if (s == null) return code to ""
+        val sb = StringBuilder()
+        s.bufferedReader(Charset.forName("UTF-8")).use { r ->
+            val buf = CharArray(32768)
+            while (sb.length < MAX_BODY_CHARS) {
+                val n = r.read(buf)
+                if (n < 0) break
+                sb.append(buf, 0, n)
+            }
+        }
+        return code to sb.toString()
+    }
+
     private fun httpGet(url: String): Pair<Int, String> {
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
@@ -27,9 +46,7 @@ object DlnaClient {
             readTimeout = TIMEOUT_MS
         }
         try {
-            val code = conn.responseCode
-            val s = if (code in 200..299) conn.inputStream else conn.errorStream
-            return code to (s?.bufferedReader(Charset.forName("UTF-8"))?.readText() ?: "")
+            return readCapped(conn)
         } finally {
             conn.disconnect()
         }
@@ -49,9 +66,7 @@ object DlnaClient {
             """<s:Body><u:$action xmlns:u="$serviceType">$bodyXml</u:$action></s:Body></s:Envelope>"""
         try {
             conn.outputStream.use { it.write(envelope.toByteArray(Charset.forName("UTF-8"))) }
-            val code = conn.responseCode
-            val s = if (code in 200..299) conn.inputStream else conn.errorStream
-            return code to (s?.bufferedReader(Charset.forName("UTF-8"))?.readText() ?: "")
+            return readCapped(conn)
         } finally {
             conn.disconnect()
         }
@@ -202,8 +217,12 @@ object DlnaClient {
             throw IllegalStateException("深さ上限")
         }
 
-    /** URLをGETしてapp-private領域に保存し、バイト数を返す */
-    suspend fun downloadToFile(url: String, dst: java.io.File): Long =
+    /** URLをGETしてapp-private領域に保存し、バイト数を返す。失敗時は不完全ファイルを消す */
+    suspend fun downloadToFile(
+        url: String,
+        dst: java.io.File,
+        maxBytes: Long = 100L * 1024 * 1024,
+    ): Long =
         withContext(Dispatchers.IO) {
             val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
@@ -219,12 +238,19 @@ object DlnaClient {
                         while (true) {
                             val n = inp.read(buf)
                             if (n < 0) break
-                            out.write(buf, 0, n)
                             total += n
+                            if (total > maxBytes) throw IllegalStateException("ファイルが大きすぎます")
+                            out.write(buf, 0, n)
                         }
                     }
                 }
                 total
+            } catch (e: Exception) {
+                try {
+                    dst.delete()
+                } catch (_: Exception) {
+                }
+                throw e
             } finally {
                 conn.disconnect()
             }

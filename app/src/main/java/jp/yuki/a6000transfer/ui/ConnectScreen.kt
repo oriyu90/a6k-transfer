@@ -62,6 +62,11 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
     LaunchedEffect(Unit) {
         val saved = prefs.getString("model", CameraProfile.AUTO) ?: CameraProfile.AUTO
         appState.setModel(saved)
+        // バインド喪失（カメラAP切断等）をステータスに反映
+        WifiBinder.onLostListener = {
+            appState.setBound(null)
+            status = ctx.getString(R.string.status_not_connected)
+        }
     }
 
     fun bind() {
@@ -84,6 +89,9 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
                         appState.setBound(null)
                     }
                 }
+            } catch (e: Exception) {
+                status = ctx.getString(R.string.failed, e.message ?: "?")
+                appState.setBound(null)
             } finally {
                 busy = false
             }
@@ -110,6 +118,8 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
                 } else {
                     status = strDiscoverFail
                 }
+            } catch (e: Exception) {
+                status = ctx.getString(R.string.failed, e.message ?: "?")
             } finally {
                 discovering = false
             }
