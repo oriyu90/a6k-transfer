@@ -32,6 +32,7 @@
     <string name="load_list">Load list</string>
     <string name="loading_list">Loading…</string>
     <string name="days_photos">%1$d day(s)・%2$d photo(s)</string>
+    <string name="days_items">%1$d day(s)・%2$d item(s)</string>
     <string name="no_photos">No photos</string>
     <string name="timeout">Timeout</string>
     <string name="failed">Failed: %1$s</string>
@@ -40,7 +41,18 @@
     <string name="transfer_selected">Transfer selected (%1$d)</string>
     <string name="transfer_done">Done: saved %1$d/%2$d to gallery</string>
     <string name="transfer_aborted">Aborted: connection may be lost (%1$d/%2$d saved). Reconnect and retry.</string>
+    <string name="transfer_cancelled">Cancelled (%1$d/%2$d saved).</string>
+    <string name="transfer_preparing">Preparing…</string>
+    <string name="transfer_progress_text">%1$d/%2$d: %3$s</string>
+    <string name="transfer_nofif_title">α6k Transfer</string>
+    <string name="notif_channel_transfer">Transfer progress</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
     <string name="saved_badge">Saved</string>
+    <string name="video_badge">Video</string>
+    <string name="filter_all">All</string>
+    <string name="filter_photos">Photos</string>
+    <string name="filter_videos">Videos</string>
 
     <string name="settings_language">Language</string>
     <string name="lang_system">Follow system</string>
@@ -61,4 +73,15 @@
     <string name="model_note">α6100 and later is a predictive implementation and is unverified. Auto tries α6000 first.</string>
     <string name="remote_api_only">Found Camera Remote API but no DLNA media server. Transfer via Remote API is not supported yet — diagnostics can inspect it.</string>
     <string name="discover_need_bind">Connect + bind first</string>
+
+    <string name="folder_title">Save folder</string>
+    <string name="folder_hint">Subfolder name under DCIM for photos and videos. Only letters, numbers, _ and - are used.</string>
+    <string name="folder_name">Folder name</string>
+    <string name="folder_saved">Saved: %1$s</string>
+    <string name="folder_current">Current: DCIM/%1$s</string>
+
+    <string name="history_title">Transfer history</string>
+    <string name="history_hint">Files transferred on this device keep the “Saved” label even if deleted from the gallery.</string>
+    <string name="history_clear">Clear history</string>
+    <string name="history_cleared">History cleared.</string>
 </resources>

@@ -6,14 +6,18 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -29,9 +33,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.layout.Row
 import androidx.core.os.LocaleListCompat
 import jp.yuki.a6000transfer.R
+import jp.yuki.a6000transfer.data.DlnaRepository
 import jp.yuki.a6000transfer.ui.theme.ThemeMode
 import jp.yuki.a6000transfer.ui.theme.applyThemeMode
 import jp.yuki.a6000transfer.ui.theme.savedThemeMode
@@ -66,6 +70,9 @@ fun applySavedLanguage(context: Context) {
 fun SettingsScreen(ctx: Context) {
     var current by remember { mutableStateOf(savedLanguage(ctx)) }
     var theme by remember { mutableStateOf(savedThemeMode(ctx)) }
+    var folder by remember { mutableStateOf(DlnaRepository.saveFolder(ctx)) }
+    var folderMsg by remember { mutableStateOf("") }
+    var historyMsg by remember { mutableStateOf("") }
     Column(
         Modifier.padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -151,6 +158,67 @@ fun SettingsScreen(ctx: Context) {
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onTertiaryContainer,
                 )
+            }
+        }
+
+        // 保存フォルダ指定
+        Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+            Column(Modifier.padding(20.dp), Arrangement.spacedBy(12.dp)) {
+                Text(
+                    stringResource(R.string.folder_title),
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                Text(
+                    stringResource(R.string.folder_hint),
+                    fontSize = 13.sp,
+                )
+                OutlinedTextField(
+                    value = folder,
+                    onValueChange = { folder = it.take(64) },
+                    label = { Text(stringResource(R.string.folder_name)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(onClick = {
+                        DlnaRepository.setSaveFolder(ctx, folder)
+                        folder = DlnaRepository.saveFolder(ctx)
+                        folderMsg = ctx.getString(R.string.folder_saved, folder)
+                    }) {
+                        Text(stringResource(R.string.save))
+                    }
+                }
+                if (folderMsg.isNotEmpty()) {
+                    Text(folderMsg, fontSize = 12.sp)
+                }
+                Text(
+                    stringResource(R.string.folder_current, DlnaRepository.saveFolder(ctx)),
+                    fontSize = 12.sp,
+                )
+            }
+        }
+
+        // 転送履歴（保存済みラベル）
+        Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+            Column(Modifier.padding(20.dp), Arrangement.spacedBy(12.dp)) {
+                Text(
+                    stringResource(R.string.history_title),
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                Text(
+                    stringResource(R.string.history_hint),
+                    fontSize = 13.sp,
+                )
+                OutlinedButton(onClick = {
+                    DlnaRepository.clearDownloadHistory(ctx)
+                    historyMsg = ctx.getString(R.string.history_cleared)
+                }) {
+                    Text(stringResource(R.string.history_clear))
+                }
+                if (historyMsg.isNotEmpty()) {
+                    Text(historyMsg, fontSize = 12.sp)
+                }
             }
         }
     }

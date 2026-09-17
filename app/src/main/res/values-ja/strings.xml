@@ -32,6 +32,7 @@
     <string name="load_list">一覧読込</string>
     <string name="loading_list">一覧取得中…</string>
     <string name="days_photos">%1$d日・%2$d件</string>
+    <string name="days_items">%1$d日・%2$d件</string>
     <string name="no_photos">写真なし</string>
     <string name="timeout">タイムアウト</string>
     <string name="failed">失敗: %1$s</string>
@@ -40,7 +41,18 @@
     <string name="transfer_selected">選択を転送 (%1$d)</string>
     <string name="transfer_done">完了: %1$d/%2$d件をギャラリーに保存</string>
     <string name="transfer_aborted">中断: 接続が切れた可能性があります（%1$d/%2$d件保存）。再接続して再試行してください</string>
+    <string name="transfer_cancelled">中止しました（%1$d/%2$d件保存）</string>
+    <string name="transfer_preparing">準備中…</string>
+    <string name="transfer_progress_text">%1$d/%2$d: %3$s</string>
+    <string name="transfer_nofif_title">α6k転送</string>
+    <string name="notif_channel_transfer">転送の進捗</string>
+    <string name="cancel">中止</string>
+    <string name="save">保存</string>
     <string name="saved_badge">保存済</string>
+    <string name="video_badge">動画</string>
+    <string name="filter_all">すべて</string>
+    <string name="filter_photos">写真</string>
+    <string name="filter_videos">動画</string>
 
     <string name="settings_language">言語 / Language</string>
     <string name="lang_system">システムに従う</string>
@@ -61,4 +73,15 @@
     <string name="model_note">α6100以降は予測実装で未検証です。自動はα6000を優先して試します。</string>
     <string name="remote_api_only">Camera Remote APIは見つかりましたがDLNAサーバーがありません。このAPI経由の転送は未対応です。診断タブで確認できます。</string>
     <string name="discover_need_bind">先に「接続＋バインド」してください</string>
+
+    <string name="folder_title">保存フォルダ</string>
+    <string name="folder_hint">写真・動画のDCIM配下サブフォルダ名。英数字と _ - のみ使用されます。</string>
+    <string name="folder_name">フォルダ名</string>
+    <string name="folder_saved">保存しました: %1$s</string>
+    <string name="folder_current">現在: DCIM/%1$s</string>
+
+    <string name="history_title">転送履歴</string>
+    <string name="history_hint">この端末で転送したファイルはギャラリーから削除しても「保存済」ラベルが残ります。</string>
+    <string name="history_clear">履歴を消去</string>
+    <string name="history_cleared">履歴を消去しました</string>
 </resources>

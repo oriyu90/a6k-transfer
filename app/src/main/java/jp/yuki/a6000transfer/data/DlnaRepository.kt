@@ -22,7 +22,31 @@ data class Photo(
     val title: String,
     val url: String,
     val dateTitle: String,
+    val kind: MediaKind = MediaKind.PHOTO,
+    val mime: String = "",
 )
+
+/** カメラがDLNAで公開するメディア種別（α6000実測: JPEG写真＋MP4動画のみ） */
+enum class MediaKind { PHOTO, VIDEO, OTHER }
+
+/**
+ * DIDLのmime・upnp:class・タイトル拡張子から種別を判定する。
+ * α6000実測値: 写真=image/jpeg＋object.item.imageItem.photo、
+ * 動画=video/mp4＋object.item.videoItem.movie（DLNA PN=AVC_MP4_MP_HD）。
+ * RAW（.ARW等）はツリーに現れないためOTHER扱い（転送対象外）。
+ */
+fun classifyMedia(mime: String, upnpClass: String, title: String): MediaKind {
+    val m = mime.lowercase()
+    val c = upnpClass.lowercase()
+    val ext = title.substringAfterLast('.', "").lowercase()
+    if (m.startsWith("video/") || c.contains("videoitem") ||
+        ext in setOf("mp4", "m2ts", "mts", "mov")
+    ) return MediaKind.VIDEO
+    if (m.startsWith("image/") || c.contains("imageitem") ||
+        ext in setOf("jpg", "jpeg", "heic", "heif", "png")
+    ) return MediaKind.PHOTO
+    return MediaKind.OTHER
+}
 
 data class DateGroup(
     val title: String,
@@ -49,6 +73,20 @@ object DlnaRepository {
                 while (c.moveToNext()) {
                     out.add(c.getString(idx) ?: "")
                     if (out.size >= 10000) break
+                }
+            }
+            // 動画タイトルも照合する（v1.1.0でMP4転送対応）
+            if (out.size < 10000) {
+                context.contentResolver.query(
+                    android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                    arrayOf(android.provider.MediaStore.Video.Media.DISPLAY_NAME),
+                    null, null, null,
+                )?.use { c ->
+                    val idx = c.getColumnIndex(android.provider.MediaStore.Video.Media.DISPLAY_NAME)
+                    while (c.moveToNext()) {
+                        out.add(c.getString(idx) ?: "")
+                        if (out.size >= 10000) break
+                    }
                 }
             }
         } catch (_: Exception) {
@@ -171,11 +209,18 @@ object DlnaRepository {
         suspend fun walk(oid: String, dateTitle: String, depth: Int) {
             if (depth > maxDepth) return
             val items = browseAll(control, oid)
+            // 転送対象は写真・動画のみ。カメラが公開しない種別（RAW等）は対象外
             val photos = items.filter { !it.isContainer && it.url.isNotEmpty() }
+                .mapNotNull { item ->
+                    val kind = classifyMedia(item.mime, item.upnpClass, item.title)
+                    if (kind == MediaKind.OTHER) return@mapNotNull null
+                    val t = item.title.ifBlank { item.id }
+                    Photo(item.id, t, item.url, "", kind, item.mime)
+                }
             if (photos.isNotEmpty()) {
                 val t = dateTitle.ifBlank { "日付不明" }
                 val existing = groups.indexOfFirst { it.title == t }
-                val mapped = photos.map { Photo(it.id, it.title.ifBlank { it.id }, it.url, t) }
+                val mapped = photos.map { it.copy(dateTitle = t) }
                 if (existing >= 0) {
                     groups[existing] = groups[existing].copy(photos = groups[existing].photos + mapped)
                 } else {
@@ -240,10 +285,11 @@ object DlnaRepository {
         }
     }
 
-    /** フルサイズ取得（進捗コールバック付き） */
+    /** フルサイズ取得（進捗コールバック・上限付き。動画の大容量化に対応） */
     suspend fun downloadFull(
         context: Context,
         photo: Photo,
+        maxBytes: Long = 4L * 1024 * 1024 * 1024,
         onProgress: (done: Long, total: Long) -> Unit = { _, _ -> },
     ): File = withContext(Dispatchers.IO) {
         val f = cacheFile(context, "full", photo.title)
@@ -256,17 +302,26 @@ object DlnaRepository {
             if (conn.responseCode !in 200..299) throw IllegalStateException("HTTP ${conn.responseCode}")
             val total = conn.contentLengthLong
             var done = 0L
-            conn.inputStream.use { inp ->
-                f.outputStream().use { out ->
-                    val buf = ByteArray(65536)
-                    while (true) {
-                        val n = inp.read(buf)
-                        if (n < 0) break
-                        out.write(buf, 0, n)
-                        done += n
-                        onProgress(done, total)
+            try {
+                conn.inputStream.use { inp ->
+                    f.outputStream().use { out ->
+                        val buf = ByteArray(65536)
+                        while (true) {
+                            val n = inp.read(buf)
+                            if (n < 0) break
+                            done += n
+                            if (done > maxBytes) throw IllegalStateException("ファイルが大きすぎます")
+                            out.write(buf, 0, n)
+                            onProgress(done, total)
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                try {
+                    f.delete()
+                } catch (_: Exception) {
+                }
+                throw e
             }
             f
         } finally {
@@ -274,15 +329,88 @@ object DlnaRepository {
         }
     }
 
-    /** ギャラリー（DCIM/A6000Transfer）に保存 */
+    /** 保存フォルダ名（DCIM配下・Download配下のサブフォルダ）。英数/_/-のみ、既定A6000Transfer */
+    const val DEFAULT_FOLDER = "A6000Transfer"
+
+    fun saveFolder(context: Context): String {
+        val raw = try {
+            context.getSharedPreferences("a6000diag", Context.MODE_PRIVATE)
+                .getString("folder", DEFAULT_FOLDER) ?: DEFAULT_FOLDER
+        } catch (_: Exception) {
+            DEFAULT_FOLDER
+        }
+        val clean = raw.trim().replace(Regex("[^A-Za-z0-9_-]"), "_").take(64).trim('_')
+        return clean.ifBlank { DEFAULT_FOLDER }
+    }
+
+    fun setSaveFolder(context: Context, name: String) {
+        try {
+            context.getSharedPreferences("a6000diag", Context.MODE_PRIVATE)
+                .edit().putString("folder", name.trim().take(64)).apply()
+        } catch (_: Exception) {
+        }
+    }
+
+    /** 端末上で過去に転送成功したタイトル（永続履歴。MediaStore照合と併用する） */
+    private const val PREF_HISTORY = "a6000history"
+    private const val KEY_TITLES = "titles"
+    private const val MAX_HISTORY = 10000
+
+    fun downloadHistory(context: Context): Set<String> = try {
+        context.getSharedPreferences(PREF_HISTORY, Context.MODE_PRIVATE)
+            .getStringSet(KEY_TITLES, emptySet())?.toSet() ?: emptySet()
+    } catch (_: Exception) {
+        emptySet()
+    }
+
+    fun addDownloadHistory(context: Context, titles: Collection<String>) {
+        if (titles.isEmpty()) return
+        try {
+            val prefs = context.getSharedPreferences(PREF_HISTORY, Context.MODE_PRIVATE)
+            val cur = prefs.getStringSet(KEY_TITLES, emptySet())?.toMutableSet() ?: mutableSetOf()
+            cur.addAll(titles)
+            // 肥大防止：上限超過時は古い順が分からないため半分を残す（Set順は不定だが履歴用途で許容）
+            val trimmed = if (cur.size > MAX_HISTORY) cur.toList().takeLast(MAX_HISTORY).toSet() else cur
+            prefs.edit().putStringSet(KEY_TITLES, trimmed).apply()
+        } catch (_: Exception) {
+        }
+    }
+
+    fun clearDownloadHistory(context: Context) {
+        try {
+            context.getSharedPreferences(PREF_HISTORY, Context.MODE_PRIVATE)
+                .edit().remove(KEY_TITLES).apply()
+        } catch (_: Exception) {
+        }
+    }
+
+    /** 種別に応じてギャラリー（写真/動画）へ保存 */
+    suspend fun saveMedia(context: Context, file: File, photo: Photo): Uri? =
+        when (photo.kind) {
+            MediaKind.VIDEO -> saveVideo(context, file, photo.title)
+            else -> savePhoto(context, file, photo.title, photo.mime)
+        }
+
+    /** ギャラリー（DCIM/保存フォルダ）に写真を保存 */
     suspend fun saveToGallery(context: Context, file: File, title: String): Uri? =
+        savePhoto(context, file, title, "image/jpeg")
+
+    private suspend fun savePhoto(context: Context, file: File, title: String, mime: String): Uri? =
         withContext(Dispatchers.IO) {
-            val name = if (title.lowercase().endsWith(".jpg") || title.lowercase().endsWith(".jpeg")) title else "$title.jpg"
+            val lower = title.lowercase()
+            val name = if (lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
+                lower.endsWith(".heic") || lower.endsWith(".heif") || lower.endsWith(".png")
+            ) {
+                title
+            } else {
+                "$title.jpg"
+            }
+            val mimeType = if (mime.lowercase().startsWith("image/")) mime.lowercase() else "image/jpeg"
             val values = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, name)
-                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.MIME_TYPE, mimeType)
                 if (Build.VERSION.SDK_INT >= 29) {
-                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/A6000Transfer")
+                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/" + saveFolder(context))
                     put(MediaStore.Images.Media.IS_PENDING, 1)
                 }
             }
@@ -295,6 +423,46 @@ object DlnaRepository {
                 if (Build.VERSION.SDK_INT >= 29) {
                     values.clear()
                     values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                }
+                uri
+            } catch (_: Exception) {
+                try {
+                    resolver.delete(uri, null, null)
+                } catch (_: Exception) {
+                }
+                null
+            }
+        }
+
+    /** ギャラリー（DCIM/保存フォルダ）に動画を保存 */
+    suspend fun saveVideo(context: Context, file: File, title: String): Uri? =
+        withContext(Dispatchers.IO) {
+            val lower = title.lowercase()
+            val name = if (lower.endsWith(".mp4") || lower.endsWith(".mov") ||
+                lower.endsWith(".m2ts") || lower.endsWith(".mts")
+            ) {
+                title
+            } else {
+                "$title.mp4"
+            }
+            val values = ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, name)
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                if (Build.VERSION.SDK_INT >= 29) {
+                    put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/" + saveFolder(context))
+                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                }
+            }
+            val resolver = context.contentResolver
+            val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return@withContext null
+            try {
+                resolver.openOutputStream(uri)?.use { out ->
+                    file.inputStream().use { it.copyTo(out) }
+                }
+                if (Build.VERSION.SDK_INT >= 29) {
+                    values.clear()
+                    values.put(MediaStore.Video.Media.IS_PENDING, 0)
                     resolver.update(uri, values, null, null)
                 }
                 uri

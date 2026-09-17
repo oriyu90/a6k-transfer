@@ -68,6 +68,7 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= 33) {
             perms += Manifest.permission.READ_MEDIA_IMAGES
             perms += Manifest.permission.READ_MEDIA_VIDEO
+            perms += Manifest.permission.POST_NOTIFICATIONS
         } else {
             perms += Manifest.permission.READ_EXTERNAL_STORAGE
         }

@@ -25,6 +25,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +35,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -53,7 +55,9 @@ import androidx.compose.ui.unit.sp
 import jp.yuki.a6000transfer.R
 import jp.yuki.a6000transfer.data.DateGroup
 import jp.yuki.a6000transfer.data.DlnaRepository
+import jp.yuki.a6000transfer.data.MediaKind
 import jp.yuki.a6000transfer.data.Photo
+import jp.yuki.a6000transfer.data.TransferManager
 import jp.yuki.a6000transfer.sony.CameraProfile
 import kotlinx.coroutines.launch
 
@@ -63,18 +67,45 @@ fun GalleryScreen(ctx: Context, appState: AppState) {
     val scope = rememberCoroutineScope()
     val location by appState.location.collectAsState()
     val model by appState.cameraModel.collectAsState()
+    val transferState by TransferManager.state.collectAsState()
     var loading by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var groups by remember { mutableStateOf<List<DateGroup>>(emptyList()) }
     var dateIdx by remember { mutableStateOf(0) }
     val selected = remember { mutableStateMapOf<String, Boolean>() }
     val doneIds = remember { mutableStateMapOf<String, Boolean>() }
-    var transferring by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf(0f) }
     var progressText by remember { mutableStateOf("") }
+    // null=すべて、PHOTO=写真のみ、VIDEO=動画のみ
+    var filter by remember { mutableStateOf<MediaKind?>(null) }
 
-    val photos = groups.getOrNull(dateIdx)?.photos ?: emptyList()
+    // サービス側で確定した転送済みをラベルへ反映
+    LaunchedEffect(transferState.doneIds) {
+        transferState.doneIds.forEach { doneIds[it] = true }
+    }
+    LaunchedEffect(transferState.finishedText) {
+        val t = transferState.finishedText
+        if (t != null) {
+            progressText = t
+            selected.clear()
+            TransferManager.consumeFinished()
+        }
+    }
+
+    val allPhotos = groups.getOrNull(dateIdx)?.photos ?: emptyList()
+    val hasPhoto = allPhotos.any { it.kind == MediaKind.PHOTO }
+    val hasVideo = allPhotos.any { it.kind == MediaKind.VIDEO }
+    val photos = when (filter) {
+        MediaKind.PHOTO -> allPhotos.filter { it.kind == MediaKind.PHOTO }
+        MediaKind.VIDEO -> allPhotos.filter { it.kind == MediaKind.VIDEO }
+        else -> allPhotos
+    }
     val selectedPhotos = photos.filter { selected[it.id] == true }
+    val transferring = transferState.running
+    val progress = if (transferState.total > 0) {
+        transferState.done.toFloat() / transferState.total
+    } else {
+        0f
+    }
 
     fun load() {
         val loc = location ?: return
@@ -94,12 +125,16 @@ fun GalleryScreen(ctx: Context, appState: AppState) {
                 } else {
                     groups = tree
                     dateIdx = 0
+                    filter = null
                     val n = tree.sumOf { it.photos.size }
-                    status = ctx.getString(R.string.days_photos, tree.size, n)
+                    status = ctx.getString(R.string.days_items, tree.size, n)
                     try {
                         val existing = DlnaRepository.existingTitles(ctx)
+                        val history = DlnaRepository.downloadHistory(ctx)
                         tree.flatMap { it.photos }.forEach { p ->
-                            if (existing.contains(p.title)) doneIds[p.id] = true
+                            if (existing.contains(p.title) || history.contains(p.title)) {
+                                doneIds[p.id] = true
+                            }
                         }
                     } catch (_: Exception) {
                     }
@@ -114,44 +149,8 @@ fun GalleryScreen(ctx: Context, appState: AppState) {
 
     fun transfer() {
         if (transferring || selectedPhotos.isEmpty()) return
-        transferring = true
-        scope.launch {
-            try {
-                var ok = 0
-                var consecutiveFail = 0
-                var aborted = false
-                selectedPhotos.forEachIndexed { i, p ->
-                    if (aborted) return@forEachIndexed
-                    progressText = "${i + 1}/${selectedPhotos.size}: ${p.title}"
-                    progress = i.toFloat() / selectedPhotos.size
-                    try {
-                        val file = DlnaRepository.downloadFull(ctx, p) { _, _ -> }
-                        val uri = DlnaRepository.saveToGallery(ctx, file, p.title)
-                        if (uri != null) {
-                            ok++
-                            doneIds[p.id] = true
-                            consecutiveFail = 0
-                        } else {
-                            consecutiveFail++
-                        }
-                    } catch (_: Exception) {
-                        consecutiveFail++
-                    }
-                    // 変なタイミングのWi-Fi切断では全件失敗が続く。3連続失敗で打ち切り復帰する
-                    if (consecutiveFail >= 3) {
-                        aborted = true
-                        progressText = ctx.getString(R.string.transfer_aborted, ok, selectedPhotos.size)
-                    }
-                }
-                if (!aborted) {
-                    progress = 1f
-                    progressText = ctx.getString(R.string.transfer_done, ok, selectedPhotos.size)
-                }
-                selected.clear()
-            } finally {
-                transferring = false
-            }
-        }
+        progressText = ""
+        TransferManager.start(ctx, selectedPhotos)
     }
 
     Column(Modifier.padding(16.dp)) {
@@ -189,6 +188,29 @@ fun GalleryScreen(ctx: Context, appState: AppState) {
                 }
             }
         }
+        // 種別フィルタ（写真と動画が混在する場合のみ表示）
+        if (hasPhoto && hasVideo) {
+            Row(
+                Modifier.fillMaxWidth().padding(top = 12.dp).horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                FilterChip(
+                    selected = filter == null,
+                    onClick = { filter = null },
+                    label = { Text(stringResource(R.string.filter_all)) },
+                )
+                FilterChip(
+                    selected = filter == MediaKind.PHOTO,
+                    onClick = { filter = MediaKind.PHOTO },
+                    label = { Text(stringResource(R.string.filter_photos)) },
+                )
+                FilterChip(
+                    selected = filter == MediaKind.VIDEO,
+                    onClick = { filter = MediaKind.VIDEO },
+                    label = { Text(stringResource(R.string.filter_videos)) },
+                )
+            }
+        }
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),
             modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 12.dp),
@@ -212,7 +234,22 @@ fun GalleryScreen(ctx: Context, appState: AppState) {
                 progress = { progress },
                 modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
             )
-            Text(progressText, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+            Text(
+                ctx.getString(
+                    R.string.transfer_progress_text,
+                    transferState.done + 1,
+                    transferState.total,
+                    transferState.currentTitle,
+                ),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            OutlinedButton(
+                onClick = { TransferManager.cancel(ctx) },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            ) {
+                Text(stringResource(R.string.cancel))
+            }
         } else if (progressText.isNotEmpty()) {
             Text(progressText, fontSize = 12.sp, modifier = Modifier.padding(top = 12.dp))
         }
@@ -249,8 +286,10 @@ private fun PhotoCell(
     done: Boolean,
     onToggle: () -> Unit,
 ) {
+    val isVideo = photo.kind == MediaKind.VIDEO
+    // 動画はカメラ側にサムネイルが無くフルDLが必要なため取得しない（大容量DL防止）
     val bmp by produceState<Bitmap?>(initialValue = null, photo.id) {
-        value = DlnaRepository.thumbnailBitmap(ctx, photo)
+        value = if (isVideo) null else DlnaRepository.thumbnailBitmap(ctx, photo)
     }
     val shape = MaterialTheme.shapes.medium
     val borderMod = if (checked) {
@@ -274,17 +313,36 @@ private fun PhotoCell(
                 contentScale = ContentScale.Crop,
             )
         } else {
-            Text(
-                photo.title,
-                fontSize = 10.sp,
-                modifier = Modifier.align(Alignment.Center).padding(4.dp),
-            )
+            Column(
+                Modifier.align(Alignment.Center).padding(4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                if (isVideo) {
+                    Text("▶", fontSize = 24.sp)
+                }
+                Text(
+                    photo.title,
+                    fontSize = 10.sp,
+                    maxLines = 2,
+                )
+            }
         }
         Checkbox(
             checked = checked,
             onCheckedChange = { onToggle() },
             modifier = Modifier.align(Alignment.TopEnd),
         )
+        if (isVideo) {
+            Text(
+                stringResource(R.string.video_badge),
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSecondary,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+            )
+        }
         if (done) {
             Text(
                 stringResource(R.string.saved_badge),

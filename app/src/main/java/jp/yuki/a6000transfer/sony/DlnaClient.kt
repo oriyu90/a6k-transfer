@@ -15,6 +15,10 @@ data class DlnaItem(
     val url: String,
     val thumbUrl: String,
     val isContainer: Boolean,
+    /** <res protocolInfo="http-get:*:image/jpeg:*"> の第3フィールド等。正規化小文字。空の場合あり */
+    val mime: String = "",
+    /** upnp:class の生値（例 object.item.imageItem.photo）。空の場合あり */
+    val upnpClass: String = "",
 )
 
 object DlnaClient {
@@ -118,6 +122,8 @@ object DlnaClient {
             var title = ""
             var url = ""
             var thumb = ""
+            var mime = ""
+            var upnpClass = ""
             var inItem = false
             var textTarget = ""
             var e = p.eventType
@@ -131,20 +137,32 @@ object DlnaClient {
                             title = ""
                             url = ""
                             thumb = ""
+                            mime = ""
+                            upnpClass = ""
                         }
-                        "title", "res", "albumArtURI" -> if (inItem) textTarget = p.name
+                        // namespace-awareのため dc:title→"title"、upnp:class→"class" の
+                        // ローカル名で届く（写真一覧が取得できている実績と同一条件）
+                        "title", "res", "albumArtURI", "class" -> if (inItem) {
+                            textTarget = p.name
+                            if (p.name == "res" && mime.isEmpty()) {
+                                // protocolInfo="http-get:*:image/jpeg:*" の第3フィールド
+                                val pi = p.getAttributeValue(null, "protocolInfo") ?: ""
+                                mime = pi.split(":").getOrNull(2)?.trim()?.lowercase() ?: ""
+                            }
+                        }
                     }
                     XmlPullParser.TEXT -> if (inItem && textTarget.isNotEmpty()) {
                         when (textTarget) {
                             "title" -> title += p.text
                             "res" -> url += p.text
                             "albumArtURI" -> thumb += p.text
+                            "class" -> upnpClass += p.text
                         }
                     }
                     XmlPullParser.END_TAG -> when (p.name) {
-                        "title", "res", "albumArtURI" -> textTarget = ""
+                        "title", "res", "albumArtURI", "class" -> textTarget = ""
                         "item", "container" -> {
-                            items.add(DlnaItem(id, title.trim(), url.trim(), thumb.trim(), isContainer))
+                            items.add(DlnaItem(id, title.trim(), url.trim(), thumb.trim(), isContainer, mime, upnpClass.trim()))
                             inItem = false
                         }
                     }
