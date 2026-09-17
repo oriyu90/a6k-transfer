@@ -24,6 +24,11 @@ sealed interface BindResult {
  * これにより (1)タイムアウト後の遅延onAvailableによる意図せぬバインド、
  * (2)タイムアウト解除と承認ダイアログ表示中の競合によるシステムエラー表示、
  * をどちらも起こさない。旧コールバックは失効後に自らunregisterする。
+ *
+ * 要求直列化: 同一SSIDへの要求が処理中の場合、新規登録せず待機者として合流する
+ * （同一Specifierの重複requestNetworkはシステム側で無視され、コールバックが
+ * 戻らず無期限待機になるため）。失効済みの処理中要求が残っている場合の再試行は、
+ * 旧登録を解除して作り直す。SSID切替時は旧要求を解除する。
  */
 object WifiBinder {
     @Volatile
@@ -31,11 +36,42 @@ object WifiBinder {
         private set
 
     private var requestedNetwork: Network? = null
-    private var activeCallback: ConnectivityManager.NetworkCallback? = null
     private val generation = AtomicInteger(0)
+    private val binderLock = Any()
+
+    private data class Outstanding(
+        val ssid: String,
+        val gen: Int,
+        val callback: ConnectivityManager.NetworkCallback,
+        val waiters: MutableList<(BindResult) -> Unit>,
+    )
+
+    private var outstanding: Outstanding? = null
 
     /** バインド喪失時の通知（AppStateのみ触ること。Contextを捕まえない） */
     var onLostListener: (() -> Unit)? = null
+
+    private fun deliver(o: Outstanding, r: BindResult) {
+        val waiters = synchronized(binderLock) {
+            if (outstanding !== o) return
+            outstanding = null
+            o.waiters.toList().also { o.waiters.clear() }
+        }
+        waiters.forEach { w ->
+            try {
+                w(r)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** 待機解除（タイムアウト・キャンセル）。システム登録は残し後始末に任せる */
+    private fun detachWaiter(waiter: (BindResult) -> Unit) {
+        synchronized(binderLock) {
+            outstanding?.waiters?.removeAll { it === waiter }
+        }
+        generation.incrementAndGet()
+    }
 
     /** 要求を登録し、後でunregisterするためのコールバックを返す */
     fun requestBind(
@@ -85,28 +121,38 @@ object WifiBinder {
                 }
             }
 
+            /** 失効済み・引継ぎ先なしの到着は自ら後始末する */
+            private fun staleArrived() {
+                synchronized(binderLock) {
+                    if (outstanding?.gen == gen) outstanding = null
+                }
+                unregisterQuietly()
+            }
+
             override fun onAvailable(network: Network) {
-                if (isStale()) {
+                val o = synchronized(binderLock) { outstanding }
+                if (o == null || o.gen != gen || isStale()) {
                     // 失効済み要求の遅延接続。バインドせず静かに後始末する
-                    unregisterQuietly()
+                    staleArrived()
                     return
                 }
                 requestedNetwork = network
                 boundSsid = ssid
                 try {
                     cm.bindProcessToNetwork(network)
-                    callback(BindResult.Ok(ssid))
+                    deliver(o, BindResult.Ok(ssid))
                 } catch (e: Exception) {
-                    callback(BindResult.Ng("bind失敗: ${e.message}"))
+                    deliver(o, BindResult.Ng("bind失敗: ${e.message}"))
                 }
             }
 
             override fun onUnavailable() {
-                if (isStale()) {
-                    unregisterQuietly()
+                val o = synchronized(binderLock) { outstanding }
+                if (o == null || o.gen != gen || isStale()) {
+                    staleArrived()
                     return
                 }
-                callback(BindResult.Ng("ネットワーク要求が利用不可（SSID/パスフレーズを確認）"))
+                deliver(o, BindResult.Ng("ネットワーク要求が利用不可（SSID/パスフレーズを確認）"))
             }
 
             override fun onLost(network: Network) {
@@ -126,21 +172,38 @@ object WifiBinder {
                 }
             }
         }
-        try {
-            cm.requestNetwork(req, nc)
-            // 旧コールバックの置換。接続済み（承認済み）のものだけ即時解除し、
-            // 承認待ちの可能性があるものは失効扱いにして自己後始末に任せる
-            // （表示中の承認ダイアログを殺すとシステムエラー表示が出るため）
-            val old = activeCallback
-            activeCallback = nc
-            if (old != null && boundSsid != null) {
+        synchronized(binderLock) {
+            val o = outstanding
+            if (o != null && o.ssid == ssid && o.gen == generation.get()) {
+                // 処理中の同一要求へ合流（重複登録はシステムに無視され待機が戻らないため）
+                o.waiters.add(callback)
+                return o.callback
+            }
+            if (o != null) {
+                // 失効済みの残骸・SSID切替の旧要求は解除して作り直す。
+                // 待機者がいれば解放を通知してぶら下げない
+                outstanding = null
+                val dropped = o.waiters.toList().also { o.waiters.clear() }
                 try {
-                    cm.unregisterNetworkCallback(old)
+                    cm.unregisterNetworkCallback(o.callback)
                 } catch (_: Exception) {
                 }
+                dropped.forEach { w ->
+                    try {
+                        w(BindResult.Ng("接続要求を作り直しました。再試行してください"))
+                    } catch (_: Exception) {
+                    }
+                }
             }
+            outstanding = Outstanding(ssid, gen, nc, mutableListOf(callback))
+        }
+        try {
+            cm.requestNetwork(req, nc)
             return nc
         } catch (e: Exception) {
+            synchronized(binderLock) {
+                if (outstanding?.gen == gen) outstanding = null
+            }
             callback(BindResult.Ng("request失敗: ${e.message}"))
             return null
         }
@@ -148,30 +211,24 @@ object WifiBinder {
 
     /** 45秒タイムアウト付き。タイムアウト時はNgを返すだけ（解除は世代ガードに任せる） */
     suspend fun requestBindAwait(context: Context, ssid: String, passphrase: String): BindResult {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         return try {
             kotlinx.coroutines.withTimeout(45_000) {
                 suspendCancellableCoroutine { cont ->
-                    val nc = requestBind(context, ssid, passphrase) {
+                    val waiter: (BindResult) -> Unit = {
                         if (cont.isActive) cont.resume(it)
                     }
+                    requestBind(context, ssid, passphrase, waiter)
                     cont.invokeOnCancellation {
                         // 失効だけ行いunregisterはしない。承認ダイアログ表示中の
                         // unregisterはシステムエラー表示を誘発するため、自己後始末に任せる
-                        generation.incrementAndGet()
-                        if (nc != null && nc !== activeCallback) {
-                            try {
-                                cm.unregisterNetworkCallback(nc)
-                            } catch (_: Exception) {
-                            }
-                        }
+                        detachWaiter(waiter)
                     }
                 }
             }
         } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
-            // 失効だけ行う。承認ダイアログ表示中のunregisterは避け、
-            // 遅延onAvailable/onUnavailableは世代ガードが無害化する
-            generation.incrementAndGet()
+            // 待機解除はinvokeOnCancellation側で実施済み。承認ダイアログ表示中の
+            // unregisterは避け、遅延onAvailable/onUnavailableは世代ガードが無害化する
+            // （再試行時は失効済み残骸を解除して作り直すため待機は残らない）
             BindResult.Ng("タイムアウト（45秒）。カメラのAPが見つからないか承認待ちの可能性。解放して再試行してください")
         }
     }
@@ -180,18 +237,30 @@ object WifiBinder {
     fun unbind(context: Context) {
         generation.incrementAndGet()
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val dropped: List<(BindResult) -> Unit>
+        synchronized(binderLock) {
+            dropped = outstanding?.waiters?.toList().orEmpty()
+            outstanding?.waiters?.clear()
+            val o = outstanding
+            outstanding = null
+            o?.callback?.let {
+                try {
+                    cm.unregisterNetworkCallback(it)
+                } catch (_: Exception) {
+                }
+            }
+        }
         try {
             cm.bindProcessToNetwork(null)
         } catch (_: Exception) {
         }
-        activeCallback?.let {
+        requestedNetwork = null
+        boundSsid = null
+        dropped.forEach { w ->
             try {
-                cm.unregisterNetworkCallback(it)
+                w(BindResult.Ng("接続を解放しました"))
             } catch (_: Exception) {
             }
         }
-        activeCallback = null
-        requestedNetwork = null
-        boundSsid = null
     }
 }

@@ -167,6 +167,8 @@ fun GalleryScreen(ctx: Context, appState: AppState) {
                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                 )
             }
+            // アプリ再起動後も同一プロセスの転送は継続するため進捗・中止手段を残す
+            TransferProgressBlock(ctx, transferState, progress, progressText)
             return@Column
         }
         Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(12.dp), Alignment.CenterVertically) {
@@ -230,26 +232,7 @@ fun GalleryScreen(ctx: Context, appState: AppState) {
             }
         }
         if (transferring) {
-            LinearWavyProgressIndicator(
-                progress = { progress },
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-            )
-            Text(
-                ctx.getString(
-                    R.string.transfer_progress_text,
-                    transferState.done + 1,
-                    transferState.total,
-                    transferState.currentTitle,
-                ),
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-            OutlinedButton(
-                onClick = { TransferManager.cancel(ctx) },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            ) {
-                Text(stringResource(R.string.cancel))
-            }
+            TransferProgressBlock(ctx, transferState, progress, "")
         } else if (progressText.isNotEmpty()) {
             Text(progressText, fontSize = 12.sp, modifier = Modifier.padding(top = 12.dp))
         }
@@ -275,6 +258,40 @@ fun GalleryScreen(ctx: Context, appState: AppState) {
                 modifier = Modifier.weight(1f),
             )
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun TransferProgressBlock(
+    ctx: Context,
+    transferState: jp.yuki.a6000transfer.data.TransferProgress,
+    progress: Float,
+    finishedText: String,
+) {
+    if (transferState.running) {
+        LinearWavyProgressIndicator(
+            progress = { progress },
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+        )
+        Text(
+            ctx.getString(
+                R.string.transfer_progress_text,
+                transferState.done + 1,
+                transferState.total,
+                transferState.currentTitle,
+            ),
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        OutlinedButton(
+            onClick = { TransferManager.cancel(ctx) },
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        ) {
+            Text(stringResource(R.string.cancel))
+        }
+    } else if (finishedText.isNotEmpty()) {
+        Text(finishedText, fontSize = 12.sp, modifier = Modifier.padding(top = 12.dp))
     }
 }
 

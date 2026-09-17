@@ -13,6 +13,7 @@ import jp.yuki.a6000transfer.sony.DiscoveryResult
 import jp.yuki.a6000transfer.sony.DlnaClient
 import jp.yuki.a6000transfer.sony.DlnaItem
 import jp.yuki.a6000transfer.sony.SsdpDiscovery
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -290,6 +291,7 @@ object DlnaRepository {
         context: Context,
         photo: Photo,
         maxBytes: Long = 4L * 1024 * 1024 * 1024,
+        isCancelled: () -> Boolean = { false },
         onProgress: (done: Long, total: Long) -> Unit = { _, _ -> },
     ): File = withContext(Dispatchers.IO) {
         val f = cacheFile(context, "full", photo.title)
@@ -307,6 +309,8 @@ object DlnaRepository {
                     f.outputStream().use { out ->
                         val buf = ByteArray(65536)
                         while (true) {
+                            // 中止要求は次チャンク待ちをせず即時反映する
+                            if (isCancelled()) throw CancellationException("cancelled")
                             val n = inp.read(buf)
                             if (n < 0) break
                             done += n
@@ -417,8 +421,30 @@ object DlnaRepository {
             val resolver = context.contentResolver
             val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return@withContext null
             try {
-                resolver.openOutputStream(uri)?.use { out ->
-                    file.inputStream().use { it.copyTo(out) }
+                // ストリーム未取得・バイト不一致は成功扱いにせず破棄する
+                val out = try {
+                    resolver.openOutputStream(uri)
+                } catch (_: Exception) {
+                    null
+                }
+                if (out == null) {
+                    try {
+                        resolver.delete(uri, null, null)
+                    } catch (_: Exception) {
+                    }
+                    return@withContext null
+                }
+                val copied = try {
+                    out.use { o -> file.inputStream().use { it.copyTo(o) } }
+                } catch (_: Exception) {
+                    -1L
+                }
+                if (copied != file.length()) {
+                    try {
+                        resolver.delete(uri, null, null)
+                    } catch (_: Exception) {
+                    }
+                    return@withContext null
                 }
                 if (Build.VERSION.SDK_INT >= 29) {
                     values.clear()
@@ -457,8 +483,30 @@ object DlnaRepository {
             val resolver = context.contentResolver
             val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return@withContext null
             try {
-                resolver.openOutputStream(uri)?.use { out ->
-                    file.inputStream().use { it.copyTo(out) }
+                // ストリーム未取得・バイト不一致は成功扱いにせず破棄する
+                val out = try {
+                    resolver.openOutputStream(uri)
+                } catch (_: Exception) {
+                    null
+                }
+                if (out == null) {
+                    try {
+                        resolver.delete(uri, null, null)
+                    } catch (_: Exception) {
+                    }
+                    return@withContext null
+                }
+                val copied = try {
+                    out.use { o -> file.inputStream().use { it.copyTo(o) } }
+                } catch (_: Exception) {
+                    -1L
+                }
+                if (copied != file.length()) {
+                    try {
+                        resolver.delete(uri, null, null)
+                    } catch (_: Exception) {
+                    }
+                    return@withContext null
                 }
                 if (Build.VERSION.SDK_INT >= 29) {
                     values.clear()

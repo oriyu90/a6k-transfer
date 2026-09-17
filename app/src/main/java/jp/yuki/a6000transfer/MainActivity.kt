@@ -62,9 +62,9 @@ class MainActivity : AppCompatActivity() {
         }
         val perms = mutableListOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.CHANGE_WIFI_MULTICAST_STATE,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
         )
-        if (Build.VERSION.SDK_INT >= 31) perms += Manifest.permission.NEARBY_WIFI_DEVICES
+        if (Build.VERSION.SDK_INT >= 33) perms += Manifest.permission.NEARBY_WIFI_DEVICES
         if (Build.VERSION.SDK_INT >= 33) {
             perms += Manifest.permission.READ_MEDIA_IMAGES
             perms += Manifest.permission.READ_MEDIA_VIDEO

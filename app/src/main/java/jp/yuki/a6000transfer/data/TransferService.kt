@@ -14,10 +14,13 @@ import android.os.PowerManager
 import androidx.core.content.ContextCompat
 import jp.yuki.a6000transfer.MainActivity
 import jp.yuki.a6000transfer.R
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -56,9 +59,9 @@ object TransferManager {
         pending = photos.toList()
         cancelRequested = false
         _state.value = TransferProgress(running = true, total = photos.size)
-        val intent = Intent(context, TransferService::class.java).setAction(ACTION_START)
+        val intent = Intent(context.applicationContext, TransferService::class.java).setAction(ACTION_START)
         try {
-            ContextCompat.startForegroundService(context, intent)
+            ContextCompat.startForegroundService(context.applicationContext, intent)
         } catch (_: Exception) {
             pending = emptyList()
             _state.value = TransferProgress()
@@ -68,7 +71,9 @@ object TransferManager {
     fun cancel(context: Context) {
         cancelRequested = true
         try {
-            context.startService(Intent(context, TransferService::class.java).setAction(ACTION_CANCEL))
+            context.applicationContext.startService(
+                Intent(context.applicationContext, TransferService::class.java).setAction(ACTION_CANCEL),
+            )
         } catch (_: Exception) {
         }
     }
@@ -92,10 +97,15 @@ object TransferManager {
     }
 }
 
+private data class BatchResult(val ok: Int, val aborted: Boolean, val cancelled: Boolean)
+
 /**
  * バックグラウンド転送用フォアグラウンドサービス。
  * 通知プログレス＋WakeLock/WifiLockで画面OFF・アプリ切替後も転送を継続する。
  * 失敗時の3連続打ち切り・履歴追記は従来UI内転送と同一ルール。
+ *
+ * 終了安全性: 完了直後の二重開始はキューで直列化し、CANCELのみ受信時は自己停止する。
+ * 中止はダウンロードの読み取りループ内で協調的に検出し、不完全ファイルは公開しない。
  */
 class TransferService : Service() {
 
@@ -103,91 +113,160 @@ class TransferService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
+    private val serviceLock = Any()
+    private var transferJob: Job? = null
+    private val pendingQueue: ArrayDeque<List<Photo>> = ArrayDeque()
+    private val cumulativeIds = mutableSetOf<String>()
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_CANCEL -> {
                 TransferManager.requestCancel()
+                synchronized(serviceLock) { pendingQueue.clear() }
+                // 実行中ジョブがなければCANCEL受信だけの起動なので残留させない
+                val idle = synchronized(serviceLock) { transferJob == null }
+                if (idle) stopSelf()
                 return START_NOT_STICKY
             }
             ACTION_START -> {
-                if (TransferManager.state.value.running && wakeLock?.isHeld == true) {
-                    return START_NOT_STICKY
-                }
                 val photos = TransferManager.takePending()
-                if (photos.isEmpty()) {
-                    stopSelf()
-                    return START_NOT_STICKY
+                var launchNow = false
+                var first: List<Photo>? = null
+                synchronized(serviceLock) {
+                    if (photos.isNotEmpty()) {
+                        if (transferJob == null && pendingQueue.isEmpty()) {
+                            cumulativeIds.clear()
+                        }
+                        pendingQueue.addLast(photos)
+                    }
+                    if (transferJob == null && pendingQueue.isNotEmpty()) {
+                        transferJob = scope.launch { drainQueue() }
+                        first = pendingQueue.firstOrNull()
+                        launchNow = true
+                    }
                 }
-                startForeground(NOTIF_ID, buildNotification(0, photos.size, "", true))
-                acquireLocks()
-                scope.launch {
-                    runTransfer(photos)
+                if (launchNow && first != null) {
+                    // startForegroundService直後に速やかにフォアグラウンド化する
+                    startForeground(NOTIF_ID, buildNotification(0, first!!.size, "", true))
+                    acquireLocks()
                 }
+                val idle = synchronized(serviceLock) { transferJob == null && pendingQueue.isEmpty() }
+                if (idle) stopSelf()
             }
         }
         return START_NOT_STICKY
     }
 
-    private suspend fun runTransfer(photos: List<Photo>) {
-        var ok = 0
-        var consecutiveFail = 0
+    /** キューが空になるまで直列に転送する。終了後は必ず状態を idle に戻す */
+    private suspend fun drainQueue() {
+        var totalOk = 0
+        var totalAttempted = 0
+        var userCancelled = false
         var aborted = false
-        val doneIds = mutableSetOf<String>()
-        val doneTitles = mutableListOf<String>()
         try {
-            photos.forEachIndexed { i, p ->
-                if (TransferManager.cancelRequested || aborted) return@forEachIndexed
-                TransferManager.publish(
-                    TransferProgress(true, i, photos.size, p.title, doneIds = doneIds.toSet()),
-                )
-                updateNotification(i, photos.size, p.title)
-                try {
-                    val file = DlnaRepository.downloadFull(this, p) { _, _ -> }
-                    val uri = DlnaRepository.saveMedia(this, file, p)
-                    if (uri != null) {
-                        ok++
-                        doneIds.add(p.id)
-                        doneTitles.add(p.title)
-                        consecutiveFail = 0
-                    } else {
-                        consecutiveFail++
+            while (true) {
+                if (TransferManager.cancelRequested) {
+                    userCancelled = true
+                    break
+                }
+                val batch = synchronized(serviceLock) { pendingQueue.removeFirstOrNull() }
+                if (batch == null) {
+                    // 新規投入との競合に備え、ロック内で空確認と終了を原子化する
+                    var done = false
+                    synchronized(serviceLock) {
+                        if (pendingQueue.isEmpty()) {
+                            transferJob = null
+                            done = true
+                        }
                     }
-                } catch (_: Exception) {
-                    consecutiveFail++
+                    if (done) break else continue
                 }
-                if (consecutiveFail >= 3) {
+                val r = runBatch(batch)
+                totalOk += r.ok
+                totalAttempted += batch.size
+                if (r.cancelled) {
+                    userCancelled = true
+                    break
+                }
+                if (r.aborted) {
                     aborted = true
+                    break
                 }
             }
-            if (doneTitles.isNotEmpty()) {
-                DlnaRepository.addDownloadHistory(this, doneTitles)
+        } finally {
+            synchronized(serviceLock) { pendingQueue.clear() }
+            releaseLocks()
+            try {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } catch (_: Exception) {
             }
+            stopSelf()
             val text = when {
-                TransferManager.cancelRequested ->
-                    getString(R.string.transfer_cancelled, ok, photos.size)
+                userCancelled || TransferManager.cancelRequested ->
+                    getString(R.string.transfer_cancelled, totalOk, totalAttempted)
                 aborted ->
-                    getString(R.string.transfer_aborted, ok, photos.size)
+                    getString(R.string.transfer_aborted, totalOk, totalAttempted)
                 else ->
-                    getString(R.string.transfer_done, ok, photos.size)
+                    getString(R.string.transfer_done, totalOk, totalAttempted)
             }
             TransferManager.publish(
-                TransferProgress(false, photos.size, photos.size, "", doneIds.toSet(), text),
+                TransferProgress(false, totalAttempted, totalAttempted, "", cumulativeIds.toSet(), text),
             )
             showFinishedNotification(text)
-        } finally {
-            releaseLocks()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
         }
+    }
+
+    private suspend fun runBatch(photos: List<Photo>): BatchResult {
+        var ok = 0
+        var consecutiveFail = 0
+        photos.forEachIndexed { i, p ->
+            if (TransferManager.cancelRequested) return BatchResult(ok, false, true)
+            val prog = TransferProgress(true, i, photos.size, p.title, doneIds = cumulativeIds.toSet())
+            TransferManager.publish(prog)
+            updateNotification(i, photos.size, p.title)
+            try {
+                val file = DlnaRepository.downloadFull(
+                    this,
+                    p,
+                    isCancelled = { !scope.coroutineContext.isActive || TransferManager.cancelRequested },
+                ) { _, _ -> }
+                // ダウンロード完了直後の中止は保存せず破棄する
+                if (TransferManager.cancelRequested || !scope.coroutineContext.isActive) {
+                    return BatchResult(ok, false, true)
+                }
+                val uri = DlnaRepository.saveMedia(this, file, p)
+                if (uri != null) {
+                    ok++
+                    cumulativeIds.add(p.id)
+                    consecutiveFail = 0
+                    // 1件ごとに履歴へ追記（強制終了時も確定分を残す）
+                    DlnaRepository.addDownloadHistory(this, listOf(p.title))
+                } else {
+                    consecutiveFail++
+                }
+            } catch (e: CancellationException) {
+                // サービス破棄時は再送出して終了させる。ユーザー中止は中断扱い
+                if (!TransferManager.cancelRequested) throw e
+                return BatchResult(ok, false, true)
+            } catch (_: Exception) {
+                consecutiveFail++
+            }
+            // 変なタイミングのWi-Fi切断では全件失敗が続く。3連続失敗で打ち切り復帰する
+            if (consecutiveFail >= 3) {
+                return BatchResult(ok, true, false)
+            }
+        }
+        return BatchResult(ok, false, false)
     }
 
     private fun acquireLocks() {
         try {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            // プロセス破棄時はシステムが自動解放するためタイムアウトなしで取得し、finally/onDestroyで必ず解放する
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "a6000:transfer").apply {
-                acquire(30 * 60 * 1000L)
+                acquire()
             }
         } catch (_: Exception) {
             wakeLock = null
