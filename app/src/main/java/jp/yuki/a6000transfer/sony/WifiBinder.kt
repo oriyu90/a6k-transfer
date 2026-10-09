@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiNetworkSpecifier
 import android.os.Build
+import jp.yuki.a6000transfer.R
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
@@ -81,17 +82,17 @@ object WifiBinder {
         callback: (BindResult) -> Unit,
     ): ConnectivityManager.NetworkCallback? {
         if (Build.VERSION.SDK_INT < 29) {
-            callback(BindResult.Ng("Android 10未満は非対応"))
+            callback(BindResult.Ng(context.getString(R.string.bind_unsupported)))
             return null
         }
         // setWpa2Passphraseは空文字・非ASCIIでIllegalArgumentExceptionを投げる。
         // 呼び出し側コルーチンをクラッシュさせないためここで検証する
         if (ssid.isBlank()) {
-            callback(BindResult.Ng("SSIDが空です"))
+            callback(BindResult.Ng(context.getString(R.string.bind_empty_ssid)))
             return null
         }
-        if (passphrase.isEmpty() || passphrase.any { it.code !in 0x20..0x7E }) {
-            callback(BindResult.Ng("パスフレーズはASCII 8〜63文字で入力してください"))
+        if (passphrase.length !in 8..63 || passphrase.any { it.code !in 0x20..0x7E }) {
+            callback(BindResult.Ng(context.getString(R.string.bind_invalid_password)))
             return null
         }
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -100,8 +101,8 @@ object WifiBinder {
                 .setSsid(ssid)
                 .setWpa2Passphrase(passphrase)
                 .build()
-        } catch (e: IllegalArgumentException) {
-            callback(BindResult.Ng("パスフレーズ不正: ${e.message}"))
+        } catch (_: IllegalArgumentException) {
+            callback(BindResult.Ng(context.getString(R.string.bind_invalid_password)))
             return null
         }
         val req = NetworkRequest.Builder()
@@ -141,8 +142,8 @@ object WifiBinder {
                 try {
                     cm.bindProcessToNetwork(network)
                     deliver(o, BindResult.Ok(ssid))
-                } catch (e: Exception) {
-                    deliver(o, BindResult.Ng("bind失敗: ${e.message}"))
+                } catch (_: Exception) {
+                    deliver(o, BindResult.Ng(context.getString(R.string.bind_failed)))
                 }
             }
 
@@ -152,7 +153,7 @@ object WifiBinder {
                     staleArrived()
                     return
                 }
-                deliver(o, BindResult.Ng("ネットワーク要求が利用不可（SSID/パスフレーズを確認）"))
+                deliver(o, BindResult.Ng(context.getString(R.string.bind_unavailable)))
             }
 
             override fun onLost(network: Network) {
@@ -190,7 +191,7 @@ object WifiBinder {
                 }
                 dropped.forEach { w ->
                     try {
-                        w(BindResult.Ng("接続要求を作り直しました。再試行してください"))
+                        w(BindResult.Ng(context.getString(R.string.bind_restarted)))
                     } catch (_: Exception) {
                     }
                 }
@@ -200,11 +201,11 @@ object WifiBinder {
         try {
             cm.requestNetwork(req, nc)
             return nc
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             synchronized(binderLock) {
                 if (outstanding?.gen == gen) outstanding = null
             }
-            callback(BindResult.Ng("request失敗: ${e.message}"))
+            callback(BindResult.Ng(context.getString(R.string.bind_failed)))
             return null
         }
     }
@@ -229,7 +230,7 @@ object WifiBinder {
             // 待機解除はinvokeOnCancellation側で実施済み。承認ダイアログ表示中の
             // unregisterは避け、遅延onAvailable/onUnavailableは世代ガードが無害化する
             // （再試行時は失効済み残骸を解除して作り直すため待機は残らない）
-            BindResult.Ng("タイムアウト（45秒）。カメラのAPが見つからないか承認待ちの可能性。解放して再試行してください")
+            BindResult.Ng(context.getString(R.string.bind_timeout))
         }
     }
 
@@ -258,7 +259,7 @@ object WifiBinder {
         boundSsid = null
         dropped.forEach { w ->
             try {
-                w(BindResult.Ng("接続を解放しました"))
+                w(BindResult.Ng(context.getString(R.string.bind_released)))
             } catch (_: Exception) {
             }
         }

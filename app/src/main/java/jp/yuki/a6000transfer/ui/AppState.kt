@@ -12,6 +12,7 @@ class AppState {
     val location: StateFlow<String?> = _location
 
     fun setBound(ssid: String?) {
+        if (ssid == null || ssid != _boundSsid.value) _location.value = null
         _boundSsid.value = ssid
     }
 

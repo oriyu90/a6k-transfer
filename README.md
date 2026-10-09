@@ -12,15 +12,17 @@ Connect to a Sony α camera's Wi-Fi access point and transfer photos and videos 
 
 1. カメラ：MENU → スマートフォン転送 → スマートフォンから選ぶ →「表示中」
    Camera: MENU → Send to Smartphone → Select on Smartphone → "Displaying"
-2. アプリの「接続」タブで「接続＋バインド」（初回のみ承認ダイアログ）
-   In the Connect tab, tap "Connect + bind" (approval dialog on first use)
-3. 「カメラ探索」→ LOCATION確定後、「転送」タブで「一覧読込」
-   Tap "Discover camera", then load the list in the Transfer tab
+2. 「接続」タブで「カメラ画面を読み取る」→ スマホのカメラを向けて撮影。SSIDとパスワードを確認して「接続＋バインド」（初回のみ承認ダイアログ）
+   In the Connect tab, scan the camera screen with your phone. Check the SSID and password, then tap "Connect + bind" (approval dialog on first use)
+3. 読み取り後はカメラ探索が自動で始まります。手入力した場合は「カメラ探索」を押してください。LOCATION確定後、「転送」タブで「一覧読込」
+   Discovery starts automatically after scanning. If you entered details manually, tap "Discover camera". Then load the list in the Transfer tab
 4. 写真・動画を選択して転送（バックグラウンド継続対応）
    Select photos/videos and transfer (continues in the background)
 
 ## 主な機能 / Features
 
+- カメラ画面のSSID・パスワードをスマホの背面カメラで読み取り。ライト、タップでピント合わせ、ズーム、読み取り結果の確認・修正に対応。画像は端末内で認識し保存しません。手入力も残しています
+  Read the camera-screen SSID and password with your phone's rear camera. Includes light, tap-to-focus, zoom, review and editing. Image recognition runs on-device without saving the captured image; manual entry remains available
 - 写真（JPEG）・動画（MP4）の一覧・選択転送、種別フィルタ（すべて/写真/動画）
   Browse and transfer JPEG photos and MP4 videos, with All/Photos/Videos filter
 - バックグラウンド転送（フォアグラウンドサービス＋通知プログレス＋中止対応）
@@ -38,7 +40,8 @@ RAW (.ARW, etc.) is not exposed by the α6000 over DLNA and is therefore out of 
 ## 動作環境 / Requirements
 
 - Android 10（API 29）以降
-- 位置情報権限（Wi-Fiスキャン用）、通知権限（転送進捗表示用、Android 13以降）
+- 位置情報権限（Wi-Fiスキャン用）、カメラ権限（画面読み取り時のみ）、通知権限（転送進捗表示用、Android 13以降）
+  Location for Wi-Fi scanning, camera when scanning the camera screen, and notifications for transfer progress (Android 13+)
 
 ## ビルド / Build
 

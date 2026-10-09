@@ -2,6 +2,7 @@ package jp.yuki.a6000transfer
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -54,7 +55,7 @@ class MainActivity : AppCompatActivity() {
         val prefsDbg = getSharedPreferences("a6000diag", MODE_PRIVATE)
         val eSsid = intent?.getStringExtra("ssid")
         val ePass = intent?.getStringExtra("pass")
-        if (eSsid != null || ePass != null) {
+        if ((applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0 && (eSsid != null || ePass != null)) {
             prefsDbg.edit().apply {
                 if (eSsid != null) putString("ssid", eSsid)
                 if (ePass != null) putString("pass", ePass)

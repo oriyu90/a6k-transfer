@@ -26,11 +26,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import jp.yuki.a6000transfer.sony.BindResult
+import jp.yuki.a6000transfer.R
 import jp.yuki.a6000transfer.sony.DlnaClient
 import jp.yuki.a6000transfer.sony.PortScan
 import jp.yuki.a6000transfer.sony.SonyClient
@@ -66,7 +72,7 @@ private fun wifiSummary(ctx: Context): String {
         } else "?"
         "SSID=$ssid RSSI=$rssi IP=$ip GW=$gw"
     } catch (e: Exception) {
-        "取得失敗: ${e.message}"
+        ctx.getString(R.string.failed, e.message ?: "?")
     }
 }
 
@@ -83,7 +89,8 @@ fun DiagScreen(ctx: Context, appState: AppState) {
     var oidField by remember { mutableStateOf("02_00_0000644000_000000_000000_000000") }
     var bindSsid by remember { mutableStateOf("DIRECT-cNE0:a6000") }
     var bindPass by remember { mutableStateOf("") }
-    var bindStatus by remember { mutableStateOf("未バインド") }
+    var bindStatus by remember { mutableStateOf(ctx.getString(R.string.diag_not_bound)) }
+    var showBindPass by remember { mutableStateOf(false) }
     val prefs = remember { ctx.getSharedPreferences("a6000diag", Context.MODE_PRIVATE) }
     LaunchedEffect(Unit) {
         bindSsid = prefs.getString("ssid", bindSsid) ?: bindSsid
@@ -95,7 +102,7 @@ fun DiagScreen(ctx: Context, appState: AppState) {
     val clipboard = LocalClipboardManager.current
 
     fun log(tag: String, body: String) {
-        val short = if (body.length > 1500) body.take(1500) + "\n…(省略 ${body.length - 1500}字)" else body
+        val short = if (body.length > 1500) body.take(1500) + "\n" + ctx.getString(R.string.diag_omitted, body.length - 1500) else body
         logs.add("[${timeNow()}] $tag\n$short")
         while (logs.size > 40) logs.removeAt(0)
     }
@@ -109,11 +116,11 @@ fun DiagScreen(ctx: Context, appState: AppState) {
     fun runTask(tag: String, block: suspend () -> String) {
         if (busy) return
         busy = true
-        log(tag, "実行中…")
+        log(tag, ctx.getString(R.string.diag_running))
         scope.launch {
             try {
                 val res = kotlinx.coroutines.withTimeoutOrNull(100_000) { block() }
-                    ?: "アプリ側タイムアウト（100秒）"
+                    ?: ctx.getString(R.string.diag_timeout)
                 log(tag, res)
             } catch (e: Exception) {
                 log(tag, "EXCEPTION ${e.javaClass.simpleName}: ${e.message}")
@@ -126,14 +133,14 @@ fun DiagScreen(ctx: Context, appState: AppState) {
     Column(Modifier.padding(12.dp).verticalScroll(rememberScrollState())) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), Arrangement.spacedBy(8.dp)) {
-                Text("接続状態", style = MaterialTheme.typography.titleMedium)
-                Text(wifiInfo.ifEmpty { "未取得" }, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                Text(stringResource(R.string.diag_connection_status), style = MaterialTheme.typography.titleMedium)
+                Text(wifiInfo.ifEmpty { stringResource(R.string.diag_not_fetched) }, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { refreshWifi() }) { Text("更新") }
+                    OutlinedButton(onClick = { refreshWifi() }) { Text(stringResource(R.string.diag_refresh)) }
                     OutlinedButton(onClick = {
                         clipboard.setText(AnnotatedString(logs.joinToString("\n\n")))
-                    }) { Text("ログをコピー") }
-                    OutlinedButton(onClick = { logs.clear() }) { Text("クリア") }
+                    }) { Text(stringResource(R.string.diag_copy_logs)) }
+                    OutlinedButton(onClick = { logs.clear() }) { Text(stringResource(R.string.clear_selection)) }
                 }
             }
         }
@@ -148,38 +155,51 @@ fun DiagScreen(ctx: Context, appState: AppState) {
 
         Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
             Column(Modifier.padding(12.dp), Arrangement.spacedBy(8.dp)) {
-                Text("カメラAPバインド（切替防止）", style = MaterialTheme.typography.titleMedium)
-                Text("状態: $bindStatus", fontSize = 13.sp)
-                OutlinedTextField(value = bindSsid, onValueChange = { bindSsid = it }, label = { Text("SSID") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                OutlinedTextField(value = bindPass, onValueChange = { bindPass = it }, label = { Text("パスフレーズ（カメラ画面の表示）") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Text(stringResource(R.string.diag_ap_bind_title), style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.status, bindStatus), fontSize = 13.sp)
+                OutlinedTextField(value = bindSsid, onValueChange = { bindSsid = it }, label = { Text(stringResource(R.string.ssid)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii))
+                OutlinedTextField(
+                    value = bindPass,
+                    onValueChange = { bindPass = it },
+                    label = { Text(stringResource(R.string.passphrase)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    visualTransformation = if (showBindPass) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        androidx.compose.material3.TextButton(onClick = { showBindPass = !showBindPass }) {
+                            Text(stringResource(if (showBindPass) R.string.hide_password else R.string.show_password))
+                        }
+                    },
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
                         prefs.edit().putString("ssid", bindSsid.trim()).putString("pass", bindPass).apply()
-                        runTask("APバインド") {
+                        runTask(ctx.getString(R.string.diag_bind_log)) {
                             when (val r = WifiBinder.requestBindAwait(ctx, bindSsid.trim(), bindPass)) {
                                 is BindResult.Ok -> {
-                                    bindStatus = "バインド中: ${r.ssid}"
+                                    bindStatus = ctx.getString(R.string.bound_as, r.ssid)
                                     appState.setBound(r.ssid)
-                                    "バインド成功: ${r.ssid}"
+                                    ctx.getString(R.string.diag_bind_success, r.ssid)
                                 }
                                 is BindResult.Ng -> {
-                                    bindStatus = "失敗: ${r.reason}"
+                                    bindStatus = ctx.getString(R.string.failed, r.reason)
                                     appState.setBound(null)
-                                    "バインド失敗: ${r.reason}"
+                                    ctx.getString(R.string.diag_bind_failure, r.reason)
                                 }
                             }
                         }
-                    }, enabled = !busy) { Text("接続＋バインド") }
+                    }, enabled = !busy) { Text(stringResource(R.string.connect_bind)) }
                     OutlinedButton(onClick = {
                         WifiBinder.unbind(ctx)
-                        bindStatus = "未バインド"
+                        bindStatus = ctx.getString(R.string.diag_not_bound)
                         appState.setBound(null)
-                    }) { Text("解放") }
+                    }) { Text(stringResource(R.string.release)) }
                 }
             }
         }
 
-        Text("定型プローブ", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp))
+        Text(stringResource(R.string.diag_presets), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp))
         OutlinedTextField(
             value = stField,
             onValueChange = { stField = it },
@@ -213,51 +233,51 @@ fun DiagScreen(ctx: Context, appState: AppState) {
             singleLine = true,
         )
         val probes = listOf(
-            "SSDP探索" to suspend {
+            stringResource(R.string.diag_ssdp_search) to suspend {
                 val r = SsdpDiscovery.discover(ctx, stField.ifBlank { "ssdp:all" })
-                if (r.isEmpty()) "(応答なし)"
+                if (r.isEmpty()) ctx.getString(R.string.diag_no_response)
                 else r.joinToString("\n---\n") { "LOCATION=${it.location}\nST=${it.st}\nUSN=${it.usn}\nSERVER=${it.server}" }
             },
             "DLNA Browse" to suspend {
                 val locs = SsdpDiscovery.discover(ctx, stField.ifBlank { "ssdp:all" })
                 val loc = locs.firstOrNull { it.location.isNotEmpty() }?.location
-                if (loc == null) "(SSDP応答なしのため実行不可)" else DlnaClient.browseRoot(loc)
+                if (loc == null) ctx.getString(R.string.diag_no_ssdp) else DlnaClient.browseRoot(loc)
             },
-            "NOTIFY待受(20s)" to suspend {
+            stringResource(R.string.diag_notify_listen) to suspend {
                 val pkts = SsdpDiscovery.listen(ctx, 20000)
-                if (pkts.isEmpty()) "(20秒間パケットなし)" else pkts.joinToString("\n---\n")
+                if (pkts.isEmpty()) ctx.getString(R.string.diag_no_packets) else pkts.joinToString("\n---\n")
             },
-            "LOCATIONからBrowse" to suspend {
+            stringResource(R.string.diag_browse_location) to suspend {
                 DlnaClient.browseRoot(
                     locField.ifBlank { "http://10.0.0.1:64321/DmsDesc.xml" },
                     oidField.ifBlank { "0" },
                 )
             },
-            "自動ドリル" to suspend {
+            stringResource(R.string.diag_drill) to suspend {
                 DlnaClient.drillDown(
                     locField.ifBlank { "http://10.0.0.1:64321/DmsDesc.xml" },
                 )
             },
-            "写真1件DL" to suspend {
+            stringResource(R.string.diag_download_photo) to suspend {
                 val loc = locField.ifBlank { "http://10.0.0.1:64321/DmsDesc.xml" }
                 val (title, url, thumb) = DlnaClient.firstPhotoUrl(loc)
                 val dir = java.io.File(ctx.filesDir, "a6000").apply { mkdirs() }
                 val safe = title.ifBlank { "photo" }.replace(Regex("[^A-Za-z0-9._-]"), "_")
                 val dst = java.io.File(dir, safe.take(60))
                 val bytes = DlnaClient.downloadToFile(url, dst)
-                "title=$title\nurl=${url.take(200)}\nthumb=${thumb.take(200)}\n保存: ${dst.absolutePath}\n${bytes} bytes"
+                "title=$title\nurl=${url.take(200)}\nthumb=${thumb.take(200)}\n${ctx.getString(R.string.diag_saved_file, dst.absolutePath)}\n${bytes} bytes"
             },
-            "ポートスキャン" to suspend {
+            stringResource(R.string.diag_port_scan) to suspend {
                 val open = PortScan.scan("10.0.0.1")
-                if (open.isEmpty()) "(開放ポートなし)" else "OPEN: " + open.joinToString(", ")
+                if (open.isEmpty()) ctx.getString(R.string.diag_no_ports) else "OPEN: " + open.joinToString(", ")
             },
-            "dd.xml取得" to suspend {
+            stringResource(R.string.diag_get_dd) to suspend {
                 val ddl = SsdpDiscovery.discover(ctx).firstOrNull()?.location
                     ?: "$baseUrl/sony/dd.xml"
                 val raw = SonyClient.get(ddl)
                 val xml = raw.substringAfter("\n", raw)
                 val svcs = SonyClient.parseDeviceDesc(xml)
-                raw + "\n[parse] " + if (svcs.isEmpty()) "(サービス抽出なし)" else svcs.joinToString("; ") { "${it.type} -> ${it.actionListUrl}" }
+                raw + "\n[parse] " + if (svcs.isEmpty()) ctx.getString(R.string.diag_no_services) else svcs.joinToString("; ") { "${it.type} -> ${it.actionListUrl}" }
             },
             "system/getVersions" to suspend { SonyClient.post("system", "getVersions") },
             "camera/getAvailableApiList" to suspend { SonyClient.post("camera", "getAvailableApiList") },
@@ -277,7 +297,7 @@ fun DiagScreen(ctx: Context, appState: AppState) {
             }
         }
 
-        Text("汎用テスター", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp))
+        Text(stringResource(R.string.diag_tester), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp))
         Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(6.dp)) {
             listOf("camera", "avContent", "system", "guide").forEach { s ->
                 OutlinedButton(onClick = { svc = s }) { Text(s, fontSize = 11.sp) }
@@ -285,15 +305,15 @@ fun DiagScreen(ctx: Context, appState: AppState) {
         }
         Text("service=$svc", fontSize = 12.sp)
         OutlinedTextField(value = method, onValueChange = { method = it }, label = { Text("method") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-        OutlinedTextField(value = params, onValueChange = { params = it }, label = { Text("params (JSON配列)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+        OutlinedTextField(value = params, onValueChange = { params = it }, label = { Text(stringResource(R.string.diag_params)) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
         OutlinedTextField(value = version, onValueChange = { version = it }, label = { Text("version") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
         Button(
             onClick = { runTask("$svc/$method") { SonyClient.post(svc, method.trim(), params.ifBlank { "[]" }, version.ifBlank { "1.0" }) } },
             enabled = !busy,
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-        ) { Text("送信") }
+        ) { Text(stringResource(R.string.diag_send)) }
 
-        Text("ログ", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp))
+        Text(stringResource(R.string.diag_logs), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp))
         Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
             logs.forEach { line ->
                 Text(line, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(vertical = 4.dp))

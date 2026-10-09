@@ -1,6 +1,11 @@
 package jp.yuki.a6000transfer.ui
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.net.wifi.WifiManager
+import android.os.Build
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,6 +26,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -28,15 +34,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import jp.yuki.a6000transfer.R
 import jp.yuki.a6000transfer.data.DlnaRepository
 import jp.yuki.a6000transfer.sony.BindResult
 import jp.yuki.a6000transfer.sony.CameraProfile
+import jp.yuki.a6000transfer.sony.CameraSsidResolver
 import jp.yuki.a6000transfer.sony.WifiBinder
 import kotlinx.coroutines.launch
 
@@ -47,6 +59,9 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
     val prefs = remember { ctx.getSharedPreferences("a6000diag", Context.MODE_PRIVATE) }
     var ssid by remember { mutableStateOf(prefs.getString("ssid", "DIRECT-cNE0:a6000") ?: "DIRECT-cNE0:a6000") }
     var pass by remember { mutableStateOf(prefs.getString("pass", "") ?: "") }
+    var scanning by rememberSaveable { mutableStateOf(false) }
+    var scanned by remember { mutableStateOf(false) }
+    var showPass by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf(ctx.getString(R.string.status_not_connected)) }
     var discovering by remember { mutableStateOf(false) }
@@ -73,21 +88,76 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
         }
     }
 
+    if (scanning) {
+        CameraScanScreen(
+            onCredentials = { credentials ->
+                val hasLocation = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                val hasNearby = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(ctx, Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED
+                val nearby = if (hasLocation && hasNearby) {
+                    try {
+                        val wifi = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                        @Suppress("DEPRECATION")
+                        wifi.scanResults.map { it.SSID }
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                } else emptyList()
+                ssid = CameraSsidResolver.resolve(credentials.ssid, nearby, ssid)
+                pass = credentials.passphrase
+                scanned = true
+                scanning = false
+                status = ctx.getString(R.string.scan_ready)
+            },
+            onBack = { scanning = false },
+        )
+        return
+    }
+
+    suspend fun performDiscovery() {
+        discovering = true
+        status = strDiscovering
+        remoteApi = null
+        try {
+            val found = kotlinx.coroutines.withTimeoutOrNull(120_000) {
+                DlnaRepository.discoverCamera(ctx, model)
+            }
+            val loc = found?.locationUrl
+            remoteApi = found?.remoteApiBase
+            if (loc != null) {
+                appState.setLocation(loc)
+                status = strDiscovered
+            } else if (remoteApi != null) {
+                status = ctx.getString(R.string.remote_api_only)
+            } else {
+                status = strDiscoverFail
+            }
+        } catch (e: Exception) {
+            status = ctx.getString(R.string.failed, e.message ?: "?")
+        } finally {
+            discovering = false
+        }
+    }
+
     fun bind() {
         if (busy) return
         busy = true
         status = strConnecting
-        prefs.edit().putString("ssid", ssid.trim()).putString("pass", pass).apply()
+        appState.setLocation(null)
         scope.launch {
             try {
                 val res = kotlinx.coroutines.withTimeoutOrNull(100_000) {
                     WifiBinder.requestBindAwait(ctx, ssid.trim(), pass)
-                } ?: BindResult.Ng("timeout")
+                } ?: BindResult.Ng(ctx.getString(R.string.bind_timeout))
                 when (res) {
                     is BindResult.Ok -> {
+                        prefs.edit().putString("ssid", ssid.trim()).putString("pass", pass).apply()
                         status = ctx.getString(R.string.bound_as, res.ssid)
                         appState.setBound(res.ssid)
                         wasBound = true
+                        if (scanned) {
+                            scanned = false
+                            performDiscovery()
+                        }
                     }
                     is BindResult.Ng -> {
                         status = ctx.getString(R.string.failed, res.reason)
@@ -105,30 +175,7 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
 
     fun discover() {
         if (discovering) return
-        discovering = true
-        status = strDiscovering
-        remoteApi = null
-        scope.launch {
-            try {
-                val found = kotlinx.coroutines.withTimeoutOrNull(120_000) {
-                    DlnaRepository.discoverCamera(ctx, model)
-                }
-                val loc = found?.locationUrl
-                remoteApi = found?.remoteApiBase
-                if (loc != null) {
-                    appState.setLocation(loc)
-                    status = strDiscovered
-                } else if (remoteApi != null) {
-                    status = ctx.getString(R.string.remote_api_only)
-                } else {
-                    status = strDiscoverFail
-                }
-            } catch (e: Exception) {
-                status = ctx.getString(R.string.failed, e.message ?: "?")
-            } finally {
-                discovering = false
-            }
-        }
+        scope.launch { performDiscovery() }
     }
 
     val working = busy || discovering
@@ -185,6 +232,13 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
         // AP接続
         Card(Modifier.fillMaxWidth().padding(top = 16.dp), shape = MaterialTheme.shapes.large) {
             Column(Modifier.padding(20.dp), Arrangement.spacedBy(12.dp)) {
+                Button(onClick = { scanning = true }, enabled = !working) {
+                    Text(stringResource(R.string.scan_start))
+                }
+                Text(stringResource(R.string.scan_entry_hint), style = MaterialTheme.typography.bodySmall)
+                if (scanned) {
+                    Text(stringResource(R.string.scan_review), color = MaterialTheme.colorScheme.primary)
+                }
                 OutlinedTextField(
                     value = ssid,
                     onValueChange = { ssid = it },
@@ -192,6 +246,7 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     shape = MaterialTheme.shapes.medium,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
                 )
                 OutlinedTextField(
                     value = pass,
@@ -200,6 +255,13 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     shape = MaterialTheme.shapes.medium,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    visualTransformation = if (showPass) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        TextButton(onClick = { showPass = !showPass }) {
+                            Text(stringResource(if (showPass) R.string.hide_password else R.string.show_password))
+                        }
+                    },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Button(onClick = { bind() }, enabled = !working) {
