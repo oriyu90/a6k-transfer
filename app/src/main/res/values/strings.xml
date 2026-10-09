@@ -17,14 +17,14 @@
     <string name="scan_start">Scan camera screen</string>
     <string name="scan_entry_hint">Point your phone at the SSID and password shown on the camera. You can still enter them manually.</string>
     <string name="scan_title">Scan camera screen</string>
-    <string name="scan_hint">Keep the SSID and password inside the frame. Tap the preview to focus, then capture.</string>
+    <string name="scan_hint">Fill the frame with the SSID and password. Hold steady and tap the text to focus. If light causes glare, switch it off.</string>
     <string name="scan_permission_hint">Camera access is needed to read the camera screen. The captured image is processed on this device and is not saved.</string>
     <string name="scan_grant_permission">Allow camera</string>
     <string name="scan_open_settings">Open app settings</string>
     <string name="scan_camera_failed">Could not start the phone camera. Check camera access and try again.</string>
     <string name="scan_capture_failed">Could not capture an image. Please try again.</string>
     <string name="scan_read_failed">Could not read the image. Please try again.</string>
-    <string name="scan_not_found">Could not clearly read both the SSID and password. Move closer, focus, and try again.</string>
+    <string name="scan_not_found">The SSID or password is unclear. Move closer, hold steady, tap to focus, and try again. You can also enter them manually.</string>
     <string name="scan_reading">Reading…</string>
     <string name="scan_capture">Capture and read</string>
     <string name="scan_torch_on">Light on</string>
@@ -32,6 +32,9 @@
     <string name="scan_zoom">Zoom %1$s×</string>
     <string name="scan_review">Read successfully. Check the SSID and tap Show to verify the password, then connect. Camera discovery starts automatically.</string>
     <string name="scan_ready">Camera details read. Ready to connect.</string>
+    <string name="scan_uncertain">Some characters need checking before you connect.</string>
+    <string name="scan_review_uncertain">Check every character of the SSID and tap Show to check the password. Similar characters such as O and 0 can look alike on the camera screen.</string>
+    <string name="scan_confirm_review">I checked both against the camera screen</string>
     <string name="bind_unsupported">Android 10 or later is required.</string>
     <string name="bind_empty_ssid">Enter an SSID.</string>
     <string name="bind_invalid_password">Enter an ASCII Wi-Fi password of 8–63 characters.</string>

@@ -21,8 +21,8 @@ Connect to a Sony α camera's Wi-Fi access point and transfer photos and videos 
 
 ## 主な機能 / Features
 
-- カメラ画面のSSID・パスワードをスマホの背面カメラで読み取り。ライト、タップでピント合わせ、ズーム、読み取り結果の確認・修正に対応。画像は端末内で認識し保存しません。手入力も残しています
-  Read the camera-screen SSID and password with your phone's rear camera. Includes light, tap-to-focus, zoom, review and editing. Image recognition runs on-device without saving the captured image; manual entry remains available
+- カメラ画面のSSID・パスワードをスマホの背面カメラで読み取り。日本語・英数字の認識結果を照合し、必要なら2回撮影します。不鮮明な文字は推測して確定せず、確認または再撮影を促します。ライト、タップでピント合わせ、ズーム、読み取り結果の修正に対応。画像は端末内で認識し保存しません。手入力も残しています
+  Read the camera-screen SSID and password with your phone's rear camera. Japanese and Latin OCR results are compared, with a second capture when needed. Unclear characters require review or another capture. Includes light, tap-to-focus, zoom, and editing. Image recognition runs on-device without saving the captured image; manual entry remains available
 - 写真（JPEG）・動画（MP4）の一覧・選択転送、種別フィルタ（すべて/写真/動画）
   Browse and transfer JPEG photos and MP4 videos, with All/Photos/Videos filter
 - バックグラウンド転送（フォアグラウンドサービス＋通知プログレス＋中止対応）

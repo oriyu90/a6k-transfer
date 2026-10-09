@@ -16,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.LoadingIndicator
@@ -36,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -61,6 +63,8 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
     var pass by remember { mutableStateOf(prefs.getString("pass", "") ?: "") }
     var scanning by rememberSaveable { mutableStateOf(false) }
     var scanned by remember { mutableStateOf(false) }
+    var scanNeedsReview by remember { mutableStateOf(false) }
+    var scanReviewed by remember { mutableStateOf(false) }
     var showPass by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf(ctx.getString(R.string.status_not_connected)) }
@@ -90,7 +94,7 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
 
     if (scanning) {
         CameraScanScreen(
-            onCredentials = { credentials ->
+            onCredentials = { reading ->
                 val hasLocation = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
                 val hasNearby = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(ctx, Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED
                 val nearby = if (hasLocation && hasNearby) {
@@ -102,11 +106,16 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
                         emptyList()
                     }
                 } else emptyList()
-                ssid = CameraSsidResolver.resolve(credentials.ssid, nearby, ssid)
-                pass = credentials.passphrase
+                val previouslyConnected = prefs.getString("ssid", null)
+                ssid = CameraSsidResolver.resolve(reading.credentials.ssid, nearby, previouslyConnected)
+                pass = reading.credentials.passphrase
                 scanned = true
+                scanNeedsReview = !reading.passwordConfirmed ||
+                    (reading.ssidNeedsReview && ssid !in nearby)
+                scanReviewed = false
+                showPass = false
                 scanning = false
-                status = ctx.getString(R.string.scan_ready)
+                status = ctx.getString(if (scanNeedsReview) R.string.scan_uncertain else R.string.scan_ready)
             },
             onBack = { scanning = false },
         )
@@ -237,11 +246,30 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
                 }
                 Text(stringResource(R.string.scan_entry_hint), style = MaterialTheme.typography.bodySmall)
                 if (scanned) {
-                    Text(stringResource(R.string.scan_review), color = MaterialTheme.colorScheme.primary)
+                    Text(
+                        stringResource(if (scanNeedsReview) R.string.scan_review_uncertain else R.string.scan_review),
+                        color = if (scanNeedsReview) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                    )
+                    if (scanNeedsReview) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = scanReviewed,
+                                onCheckedChange = { scanReviewed = it },
+                                enabled = showPass,
+                            )
+                            Text(
+                                stringResource(R.string.scan_confirm_review),
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
                 }
                 OutlinedTextField(
                     value = ssid,
-                    onValueChange = { ssid = it },
+                    onValueChange = {
+                        ssid = it
+                        if (scanNeedsReview) scanReviewed = false
+                    },
                     label = { Text(stringResource(R.string.ssid)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
@@ -250,7 +278,10 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
                 )
                 OutlinedTextField(
                     value = pass,
-                    onValueChange = { pass = it },
+                    onValueChange = {
+                        pass = it
+                        if (scanNeedsReview) scanReviewed = false
+                    },
                     label = { Text(stringResource(R.string.passphrase)) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
@@ -264,7 +295,7 @@ fun ConnectScreen(ctx: Context, appState: AppState) {
                     },
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = { bind() }, enabled = !working) {
+                    Button(onClick = { bind() }, enabled = !working && (!scanNeedsReview || scanReviewed)) {
                         Text(stringResource(R.string.connect_bind))
                     }
                     OutlinedButton(onClick = {

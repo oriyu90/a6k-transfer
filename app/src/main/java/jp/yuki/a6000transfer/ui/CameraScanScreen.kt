@@ -4,19 +4,20 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.Surface
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.OptIn
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.TorchState
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -27,10 +28,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -57,18 +62,15 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 import jp.yuki.a6000transfer.R
-import jp.yuki.a6000transfer.sony.CameraCredentialsParser
+import jp.yuki.a6000transfer.sony.CameraCredentialReader
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 @Composable
 fun CameraScanScreen(
-    onCredentials: (CameraCredentialsParser.Credentials) -> Unit,
+    onCredentials: (CameraCredentialReader.Reading) -> Unit,
     onBack: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
@@ -107,12 +109,13 @@ fun CameraScanScreen(
 
 @Composable
 private fun CameraSession(
-    onCredentials: (CameraCredentialsParser.Credentials) -> Unit,
+    onCredentials: (CameraCredentialReader.Reading) -> Unit,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val executor = remember(context) { ContextCompat.getMainExecutor(context) }
+    val handler = remember { Handler(Looper.getMainLooper()) }
     val previewView = remember(context) {
         PreviewView(context).apply {
             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
@@ -127,7 +130,7 @@ private fun CameraSession(
     var reading by remember { mutableStateOf(false) }
     var torchOn by remember { mutableStateOf(false) }
     var zoomRatio by remember { mutableFloatStateOf(1f) }
-    val active = remember { AtomicBoolean(true) }
+    val active = remember(lifecycleOwner, previewView) { AtomicBoolean(true) }
 
     DisposableEffect(lifecycleOwner, previewView) {
         val future = try {
@@ -158,6 +161,7 @@ private fun CameraSession(
                     camera = readyCamera
                     imageCapture = readyCapture
                     zoomRatio = readyCamera.cameraInfo.zoomState.value?.zoomRatio ?: 1f
+                    torchOn = readyCamera.cameraInfo.torchState.value == TorchState.ON
                 } catch (_: Exception) {
                     errorRes = R.string.scan_camera_failed
                 }
@@ -179,55 +183,45 @@ private fun CameraSession(
         if (reading) return
         reading = true
         errorRes = null
-        capture.targetRotation = previewView.display?.rotation ?: Surface.ROTATION_0
-        try {
-            capture.takePicture(executor, object : ImageCapture.OnImageCapturedCallback() {
-            @OptIn(markerClass = [ExperimentalGetImage::class])
-            override fun onCaptureSuccess(image: androidx.camera.core.ImageProxy) {
-                var recognizer: com.google.mlkit.vision.text.TextRecognizer? = null
+        fun finish(result: CameraCredentialReader.Reading?, failure: Int = R.string.scan_not_found) {
+            if (!active.get()) return
+            reading = false
+            if (result == null) errorRes = failure else onCredentials(result)
+        }
+        lateinit var captureAttempt: (Int, CameraCredentialReader.Reading?) -> Unit
+        captureAttempt = { attempt, prior ->
+            if (active.get()) {
                 try {
-                    val reader = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
-                    recognizer = reader
-                    val mediaImage = image.image ?: throw IllegalStateException("No capture image")
-                    val input = InputImage.fromMediaImage(mediaImage, image.imageInfo.rotationDegrees)
-                    reader.process(input)
-                        .addOnSuccessListener(executor) { text ->
-                            if (active.get()) {
-                                val lines = text.textBlocks.flatMap { block -> block.lines.map { it.text } }
-                                val parsed = CameraCredentialsParser.parse(lines)
-                                if (parsed == null) errorRes = R.string.scan_not_found
-                                else onCredentials(parsed)
+                    capture.targetRotation = previewView.display?.rotation ?: Surface.ROTATION_0
+                    capture.takePicture(executor, object : ImageCapture.OnImageCapturedCallback() {
+                        override fun onCaptureSuccess(image: androidx.camera.core.ImageProxy) {
+                            CameraOcrProcessor.read(image, executor) { result ->
+                                if (active.get()) {
+                                    val merged = CameraCredentialReader.combine(prior, result)
+                                    if (result?.passwordConfirmed == true) {
+                                        finish(result)
+                                    } else if (attempt < 2) {
+                                        handler.postDelayed({ captureAttempt(2, merged) }, 300)
+                                    } else {
+                                        finish(merged)
+                                    }
+                                }
                             }
                         }
-                        .addOnFailureListener(executor) {
-                            if (active.get()) errorRes = R.string.scan_read_failed
-                        }
-                        .addOnCompleteListener(executor) {
-                            image.close()
-                            reader.close()
-                            if (active.get()) reading = false
-                        }
-                } catch (_: Exception) {
-                    image.close()
-                    recognizer?.close()
-                    if (active.get()) {
-                        errorRes = R.string.scan_read_failed
-                        reading = false
-                    }
-                }
-            }
 
-            override fun onError(exception: ImageCaptureException) {
-                if (active.get()) {
-                    errorRes = R.string.scan_capture_failed
-                    reading = false
+                        override fun onError(exception: ImageCaptureException) {
+                            if (!active.get()) return
+                            if (attempt < 2) handler.postDelayed({ captureAttempt(2, prior) }, 300)
+                            else finish(prior, R.string.scan_capture_failed)
+                        }
+                    })
+                } catch (_: Exception) {
+                    if (attempt < 2) handler.postDelayed({ captureAttempt(2, prior) }, 300)
+                    else finish(prior, R.string.scan_capture_failed)
                 }
             }
-            })
-        } catch (_: Exception) {
-            errorRes = R.string.scan_capture_failed
-            reading = false
         }
+        captureAttempt(1, null)
     }
 
     val zoomState = camera?.cameraInfo?.zoomState?.value
@@ -247,13 +241,22 @@ private fun CameraSession(
                     factory = { previewView },
                     modifier = Modifier.fillMaxSize().pointerInput(camera) {
                         detectTapGestures { position ->
-                            camera?.cameraControl?.startFocusAndMetering(
-                                FocusMeteringAction.Builder(
-                                    previewView.meteringPointFactory.createPoint(position.x, position.y),
-                                ).setAutoCancelDuration(3, TimeUnit.SECONDS).build(),
-                            )
+                            try {
+                                camera?.cameraControl?.startFocusAndMetering(
+                                    FocusMeteringAction.Builder(
+                                        previewView.meteringPointFactory.createPoint(position.x, position.y),
+                                    ).setAutoCancelDuration(3, TimeUnit.SECONDS).build(),
+                                )
+                            } catch (_: Exception) {
+                                errorRes = R.string.scan_camera_failed
+                            }
                         }
                     },
+                )
+                Box(
+                    Modifier.fillMaxWidth(0.88f).fillMaxHeight(0.62f)
+                        .align(Alignment.Center)
+                        .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp)),
                 )
             }
             Column(

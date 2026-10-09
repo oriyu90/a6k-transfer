@@ -17,14 +17,14 @@
     <string name="scan_start">カメラ画面を読み取る</string>
     <string name="scan_entry_hint">カメラに表示されたSSIDとパスワードをスマホで撮影します。手入力もできます。</string>
     <string name="scan_title">カメラ画面を読み取る</string>
-    <string name="scan_hint">SSIDとパスワードを枠内に入れ、画面をタップしてピントを合わせてから撮影してください。</string>
+    <string name="scan_hint">SSIDとパスワードが枠いっぱいに入るまで近づき、文字をタップしてピントを合わせ、動かさずに撮影してください。反射が強ければライトを消してください。</string>
     <string name="scan_permission_hint">カメラ画面の読み取りにはスマホのカメラ権限が必要です。撮影画像は端末内で処理し、保存しません。</string>
     <string name="scan_grant_permission">カメラを許可</string>
     <string name="scan_open_settings">アプリ設定を開く</string>
     <string name="scan_camera_failed">スマホのカメラを起動できません。権限を確認して再試行してください。</string>
     <string name="scan_capture_failed">撮影できませんでした。もう一度お試しください。</string>
     <string name="scan_read_failed">画像を読み取れませんでした。もう一度お試しください。</string>
-    <string name="scan_not_found">SSIDとパスワードの両方を明確に読み取れませんでした。近づいてピントを合わせ、再試行してください。</string>
+    <string name="scan_not_found">SSIDかパスワードが不鮮明です。近づいて動かさず、文字をタップしてピントを合わせて再試行してください。手入力もできます。</string>
     <string name="scan_reading">読み取り中…</string>
     <string name="scan_capture">撮影して読み取る</string>
     <string name="scan_torch_on">ライト点灯</string>
@@ -32,6 +32,9 @@
     <string name="scan_zoom">ズーム %1$s倍</string>
     <string name="scan_review">読み取りました。SSIDを確認し、「表示」でパスワードを確かめてから接続してください。カメラ探索は自動で始まります。</string>
     <string name="scan_ready">カメラ情報を読み取りました。接続できます。</string>
+    <string name="scan_uncertain">接続前に読み取った文字の確認が必要です。</string>
+    <string name="scan_review_uncertain">SSIDを一文字ずつ確認し、「表示」でパスワードも確認してください。カメラ画面では O と 0 などが似て見えます。</string>
+    <string name="scan_confirm_review">カメラ画面と照合しました</string>
     <string name="bind_unsupported">Android 10以降が必要です。</string>
     <string name="bind_empty_ssid">SSIDを入力してください。</string>
     <string name="bind_invalid_password">Wi-FiパスワードはASCIIの8～63文字で入力してください。</string>
