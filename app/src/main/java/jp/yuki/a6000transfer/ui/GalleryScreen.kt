@@ -116,7 +116,7 @@ fun GalleryScreen(ctx: Context, appState: AppState) {
             try {
                 val depth = CameraProfile.of(if (model == CameraProfile.AUTO) null else model).maxDepth
                 val tree = kotlinx.coroutines.withTimeoutOrNull(120_000) {
-                    DlnaRepository.loadTree(loc, depth)
+                    DlnaRepository.loadTree(ctx, loc, depth)
                 }
                 if (tree == null) {
                     status = ctx.getString(R.string.timeout)

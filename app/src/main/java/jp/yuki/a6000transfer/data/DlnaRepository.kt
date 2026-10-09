@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import jp.yuki.a6000transfer.R
 import jp.yuki.a6000transfer.sony.CameraProfile
 import jp.yuki.a6000transfer.sony.DiscoveryResult
 import jp.yuki.a6000transfer.sony.DlnaClient
@@ -173,7 +174,7 @@ object DlnaRepository {
         }
     }
 
-    suspend fun controlUrl(locationUrl: String): String = withContext(Dispatchers.IO) {
+    suspend fun controlUrl(context: Context, locationUrl: String): String = withContext(Dispatchers.IO) {
         val conn = (java.net.URL(locationUrl).openConnection() as java.net.HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 10000
@@ -182,19 +183,19 @@ object DlnaRepository {
         try {
             val xml = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
             DlnaClient.findContentDirectoryControlUrl(locationUrl, xml)
-                ?: throw IllegalStateException("ContentDirectoryなし")
+                ?: throw IllegalStateException(context.getString(R.string.dlna_missing_service))
         } finally {
             conn.disconnect()
         }
     }
 
     /** 全ページ取得（サーバー異常時の無限ループ防止に上限あり） */
-    suspend fun browseAll(control: String, objectId: String): List<DlnaItem> {
+    suspend fun browseAll(context: Context, control: String, objectId: String): List<DlnaItem> {
         val out = mutableListOf<DlnaItem>()
         var start = 0
         repeat(20) {
             val page = DlnaClient.browseItems(control, SERVICE_TYPE, objectId, 100, start)
-            if (page.total < 0) throw IllegalStateException("Browse失敗 oid=$objectId")
+            if (page.total < 0) throw IllegalStateException(context.getString(R.string.dlna_browse_failed_oid, objectId))
             out.addAll(page.items)
             if (out.size >= page.total || page.items.isEmpty()) return out
             start += page.items.size
@@ -204,12 +205,12 @@ object DlnaRepository {
     }
 
     /** ツリー走査：日付グループ→写真一覧。階層変動に強い深さ優先 */
-    suspend fun loadTree(locationUrl: String, maxDepth: Int = 3): List<DateGroup> {
-        val control = controlUrl(locationUrl)
+    suspend fun loadTree(context: Context, locationUrl: String, maxDepth: Int = 3): List<DateGroup> {
+        val control = controlUrl(context, locationUrl)
         val groups = mutableListOf<DateGroup>()
         suspend fun walk(oid: String, dateTitle: String, depth: Int) {
             if (depth > maxDepth) return
-            val items = browseAll(control, oid)
+            val items = browseAll(context, control, oid)
             // 転送対象は写真・動画のみ。カメラが公開しない種別（RAW等）は対象外
             val photos = items.filter { !it.isContainer && it.url.isNotEmpty() }
                 .mapNotNull { item ->
@@ -219,7 +220,7 @@ object DlnaRepository {
                     Photo(item.id, t, item.url, "", kind, item.mime)
                 }
             if (photos.isNotEmpty()) {
-                val t = dateTitle.ifBlank { "日付不明" }
+                val t = dateTitle.ifBlank { context.getString(R.string.dlna_unknown_date) }
                 val existing = groups.indexOfFirst { it.title == t }
                 val mapped = photos.map { it.copy(dateTitle = t) }
                 if (existing >= 0) {
@@ -269,7 +270,7 @@ object DlnaRepository {
                 try {
                     val f = cacheFile(context, "thumb", photo.id.ifBlank { photo.title })
                     if (!f.exists() || f.length() == 0L) {
-                        DlnaClient.downloadToFile(photo.url, f)
+                        DlnaClient.downloadToFile(photo.url, f, context = context)
                     }
                     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     BitmapFactory.decodeFile(f.absolutePath, bounds)
@@ -314,7 +315,7 @@ object DlnaRepository {
                             val n = inp.read(buf)
                             if (n < 0) break
                             done += n
-                            if (done > maxBytes) throw IllegalStateException("ファイルが大きすぎます")
+                            if (done > maxBytes) throw IllegalStateException(context.getString(R.string.dlna_file_too_large))
                             out.write(buf, 0, n)
                             onProgress(done, total)
                         }

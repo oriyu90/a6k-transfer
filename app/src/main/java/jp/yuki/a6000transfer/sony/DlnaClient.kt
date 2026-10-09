@@ -1,5 +1,7 @@
 package jp.yuki.a6000transfer.sony
 
+import android.content.Context
+import jp.yuki.a6000transfer.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
@@ -178,29 +180,29 @@ object DlnaClient {
      * location(device記述URL) → ContentDirectory Browse(ObjectID=0) まで一気に実行し、
      * 人間可読なレポートを返す。
      */
-    suspend fun browseRoot(locationUrl: String, objectId: String = "0"): String = withContext(Dispatchers.IO) {
+    suspend fun browseRoot(context: Context, locationUrl: String, objectId: String = "0"): String = withContext(Dispatchers.IO) {
         try {
-            kotlinx.coroutines.withTimeout(60_000) { browseRootInner(locationUrl, objectId) }
+            kotlinx.coroutines.withTimeout(60_000) { browseRootInner(context, locationUrl, objectId) }
         } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
-            "Browse全体タイムアウト（60秒）"
+            context.getString(R.string.dlna_browse_timeout)
         }
     }
 
-    private suspend fun browseRootInner(locationUrl: String, objectId: String): String {
+    private suspend fun browseRootInner(context: Context, locationUrl: String, objectId: String): String {
         val sb = StringBuilder()
         sb.append("LOCATION=$locationUrl\n")
         val (codeD, devXml) = try {
             httpGet(locationUrl)
         } catch (e: Exception) {
-            return sb.append("device記述取得失敗: ${e.message}").toString()
+            return sb.append(context.getString(R.string.dlna_device_fetch_failed, e.message ?: "?")).toString()
         }
-        sb.append("device記述: HTTP $codeD (${devXml.length} bytes)\n")
+        sb.append(context.getString(R.string.dlna_device_description, codeD, devXml.length)).append('\n')
         if (codeD !in 200..299) {
             sb.append(devXml.take(1000))
             return sb.toString()
         }
         val control = findContentDirectoryControlUrl(locationUrl, devXml)
-        sb.append("ContentDirectory controlURL=${control ?: "(なし)"}\n")
+        sb.append("ContentDirectory controlURL=${control ?: context.getString(R.string.dlna_none)}\n")
         if (control == null) {
             sb.append(devXml.take(2000))
             return sb.toString()
@@ -217,11 +219,11 @@ object DlnaClient {
     data class BrowsePage(val total: Int, val returned: Int, val items: List<DlnaItem>)
 
     /** コンテナ連鎖を辿って最初の写真アイテムの(title, url)を返す */
-    suspend fun firstPhotoUrl(locationUrl: String): Triple<String, String, String> =
+    suspend fun firstPhotoUrl(context: Context, locationUrl: String): Triple<String, String, String> =
         withContext(Dispatchers.IO) {
             val (_, devXml) = httpGet(locationUrl)
             val control = findContentDirectoryControlUrl(locationUrl, devXml)
-                ?: throw IllegalStateException("ContentDirectoryなし")
+                ?: throw IllegalStateException(context.getString(R.string.dlna_missing_service))
             val serviceType = "urn:schemas-upnp-org:service:ContentDirectory:1"
             var oid = "0"
             var title = ""
@@ -230,9 +232,9 @@ object DlnaClient {
                 val photo = page.items.firstOrNull { !it.isContainer && it.url.isNotEmpty() }
                 if (photo != null) return@withContext Triple(photo.title, photo.url, photo.thumbUrl)
                 oid = page.items.firstOrNull { it.isContainer }?.id
-                    ?: throw IllegalStateException("写真なし(depth=$it)")
+                    ?: throw IllegalStateException(context.getString(R.string.dlna_no_photo, it))
             }
-            throw IllegalStateException("深さ上限")
+            throw IllegalStateException(context.getString(R.string.dlna_depth_limit))
         }
 
     /** URLをGETしてapp-private領域に保存し、バイト数を返す。失敗時は不完全ファイルを消す */
@@ -240,6 +242,7 @@ object DlnaClient {
         url: String,
         dst: java.io.File,
         maxBytes: Long = 100L * 1024 * 1024,
+        context: Context? = null,
     ): Long =
         withContext(Dispatchers.IO) {
             val conn = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -257,7 +260,7 @@ object DlnaClient {
                             val n = inp.read(buf)
                             if (n < 0) break
                             total += n
-                            if (total > maxBytes) throw IllegalStateException("ファイルが大きすぎます")
+                            if (total > maxBytes) throw IllegalStateException(context?.getString(R.string.dlna_file_too_large) ?: "File exceeds size limit")
                             out.write(buf, 0, n)
                         }
                     }
@@ -293,29 +296,30 @@ object DlnaClient {
      * 0 → 最初のコンテナ → 最初のコンテナ…と自動で辿り、写真アイテムまで到達する。
      * 手入力なしで一覧取得するための診断用ドリル。
      */
-    suspend fun drillDown(locationUrl: String): String = withContext(Dispatchers.IO) {
+    suspend fun drillDown(context: Context, locationUrl: String): String = withContext(Dispatchers.IO) {
         try {
-            kotlinx.coroutines.withTimeout(90_000) { drillDownInner(locationUrl) }
+            kotlinx.coroutines.withTimeout(90_000) { drillDownInner(context, locationUrl) }
         } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
-            "ドリル全体タイムアウト（90秒）"
+            context.getString(R.string.dlna_drill_timeout)
         }
     }
 
-    private suspend fun drillDownInner(locationUrl: String): String {        val sb = StringBuilder()
+    private suspend fun drillDownInner(context: Context, locationUrl: String): String {
+        val sb = StringBuilder()
         val (_, devXml) = try {
             httpGet(locationUrl)
         } catch (e: Exception) {
-            return "device記述取得失敗: ${e.message}"
+            return context.getString(R.string.dlna_device_fetch_failed, e.message ?: "?")
         }
         val control = findContentDirectoryControlUrl(locationUrl, devXml)
-            ?: return "ContentDirectoryなし"
+            ?: return context.getString(R.string.dlna_missing_service)
         val serviceType = "urn:schemas-upnp-org:service:ContentDirectory:1"
         var oid = "0"
         repeat(6) { depth ->
             val page = try {
                 browseItems(control, serviceType, oid, 50)
             } catch (e: Exception) {
-                return sb.append("Browse失敗(depth=$depth oid=$oid): ${e.message}").toString()
+                return sb.append(context.getString(R.string.dlna_browse_failed, depth, oid, e.message ?: "?")).toString()
             }
             sb.append("depth=$depth oid=$oid total=${page.total} items=${page.items.size}\n")
             val next = page.items.firstOrNull { it.isContainer }
@@ -323,10 +327,10 @@ object DlnaClient {
             photos.take(30).forEach {
                 sb.append("- [I] title=${it.title}\n  url=${it.url.take(200)}\n  thumb=${it.thumbUrl.take(200)}\n")
             }
-            if (next == null) return sb.append("(末端到達)").toString()
-            if (photos.isNotEmpty()) return sb.append("(写真とコンテナ混在・終了)").toString()
+            if (next == null) return sb.append(context.getString(R.string.dlna_end_reached)).toString()
+            if (photos.isNotEmpty()) return sb.append(context.getString(R.string.dlna_mixed_content)).toString()
             oid = next.id
         }
-        return sb.append("(深さ上限)").toString()
+        return sb.append(context.getString(R.string.dlna_depth_limit)).toString()
     }
 }

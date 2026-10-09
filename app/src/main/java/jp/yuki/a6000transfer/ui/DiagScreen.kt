@@ -241,7 +241,7 @@ fun DiagScreen(ctx: Context, appState: AppState) {
             "DLNA Browse" to suspend {
                 val locs = SsdpDiscovery.discover(ctx, stField.ifBlank { "ssdp:all" })
                 val loc = locs.firstOrNull { it.location.isNotEmpty() }?.location
-                if (loc == null) ctx.getString(R.string.diag_no_ssdp) else DlnaClient.browseRoot(loc)
+                if (loc == null) ctx.getString(R.string.diag_no_ssdp) else DlnaClient.browseRoot(ctx, loc)
             },
             stringResource(R.string.diag_notify_listen) to suspend {
                 val pkts = SsdpDiscovery.listen(ctx, 20000)
@@ -249,22 +249,24 @@ fun DiagScreen(ctx: Context, appState: AppState) {
             },
             stringResource(R.string.diag_browse_location) to suspend {
                 DlnaClient.browseRoot(
+                    ctx,
                     locField.ifBlank { "http://10.0.0.1:64321/DmsDesc.xml" },
                     oidField.ifBlank { "0" },
                 )
             },
             stringResource(R.string.diag_drill) to suspend {
                 DlnaClient.drillDown(
+                    ctx,
                     locField.ifBlank { "http://10.0.0.1:64321/DmsDesc.xml" },
                 )
             },
             stringResource(R.string.diag_download_photo) to suspend {
                 val loc = locField.ifBlank { "http://10.0.0.1:64321/DmsDesc.xml" }
-                val (title, url, thumb) = DlnaClient.firstPhotoUrl(loc)
+                val (title, url, thumb) = DlnaClient.firstPhotoUrl(ctx, loc)
                 val dir = java.io.File(ctx.filesDir, "a6000").apply { mkdirs() }
                 val safe = title.ifBlank { "photo" }.replace(Regex("[^A-Za-z0-9._-]"), "_")
                 val dst = java.io.File(dir, safe.take(60))
-                val bytes = DlnaClient.downloadToFile(url, dst)
+                val bytes = DlnaClient.downloadToFile(url, dst, context = ctx)
                 "title=$title\nurl=${url.take(200)}\nthumb=${thumb.take(200)}\n${ctx.getString(R.string.diag_saved_file, dst.absolutePath)}\n${bytes} bytes"
             },
             stringResource(R.string.diag_port_scan) to suspend {

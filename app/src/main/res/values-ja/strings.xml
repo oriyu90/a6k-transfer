@@ -118,6 +118,20 @@
     <string name="diag_params">params（JSON配列）</string>
     <string name="diag_send">送信</string>
     <string name="diag_logs">ログ</string>
+    <string name="dlna_browse_timeout">Browse全体がタイムアウトしました（60秒）</string>
+    <string name="dlna_drill_timeout">ドリル全体がタイムアウトしました（90秒）</string>
+    <string name="dlna_device_fetch_failed">デバイス記述の取得に失敗: %1$s</string>
+    <string name="dlna_device_description">デバイス記述: HTTP %1$d（%2$d バイト）</string>
+    <string name="dlna_none">（なし）</string>
+    <string name="dlna_missing_service">ContentDirectoryがありません</string>
+    <string name="dlna_no_photo">写真がありません（深さ=%1$d）</string>
+    <string name="dlna_depth_limit">深さの上限に達しました</string>
+    <string name="dlna_browse_failed">Browse失敗（深さ=%1$d oid=%2$s）: %3$s</string>
+    <string name="dlna_browse_failed_oid">Browse失敗（oid=%1$s）</string>
+    <string name="dlna_end_reached">（末端に到達）</string>
+    <string name="dlna_mixed_content">（写真とコンテナが混在・終了）</string>
+    <string name="dlna_file_too_large">ファイルが大きすぎます</string>
+    <string name="dlna_unknown_date">日付不明</string>
 
     <string name="theme_title">テーマ</string>
     <string name="theme_system">システム</string>

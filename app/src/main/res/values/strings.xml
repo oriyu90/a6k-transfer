@@ -118,6 +118,20 @@
     <string name="diag_params">params (JSON array)</string>
     <string name="diag_send">Send</string>
     <string name="diag_logs">Logs</string>
+    <string name="dlna_browse_timeout">Browse timed out (60 seconds)</string>
+    <string name="dlna_drill_timeout">Drill down timed out (90 seconds)</string>
+    <string name="dlna_device_fetch_failed">Device description fetch failed: %1$s</string>
+    <string name="dlna_device_description">Device description: HTTP %1$d (%2$d bytes)</string>
+    <string name="dlna_none">(none)</string>
+    <string name="dlna_missing_service">ContentDirectory unavailable</string>
+    <string name="dlna_no_photo">No photo (depth=%1$d)</string>
+    <string name="dlna_depth_limit">Depth limit reached</string>
+    <string name="dlna_browse_failed">Browse failed (depth=%1$d oid=%2$s): %3$s</string>
+    <string name="dlna_browse_failed_oid">Browse failed (oid=%1$s)</string>
+    <string name="dlna_end_reached">(end reached)</string>
+    <string name="dlna_mixed_content">(photos and containers; stopped)</string>
+    <string name="dlna_file_too_large">File exceeds size limit</string>
+    <string name="dlna_unknown_date">Unknown date</string>
 
     <string name="theme_title">Theme</string>
     <string name="theme_system">System</string>
