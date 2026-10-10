@@ -21,6 +21,8 @@ data class DlnaItem(
     val mime: String = "",
     /** upnp:class の生値（例 object.item.imageItem.photo）。空の場合あり */
     val upnpClass: String = "",
+    /** dc:date（カメラが項目ごとに公開する場合のみ） */
+    val date: String = "",
 )
 
 object DlnaClient {
@@ -126,6 +128,7 @@ object DlnaClient {
             var thumb = ""
             var mime = ""
             var upnpClass = ""
+            var date = ""
             var inItem = false
             var textTarget = ""
             var e = p.eventType
@@ -141,10 +144,11 @@ object DlnaClient {
                             thumb = ""
                             mime = ""
                             upnpClass = ""
+                            date = ""
                         }
                         // namespace-awareのため dc:title→"title"、upnp:class→"class" の
                         // ローカル名で届く（写真一覧が取得できている実績と同一条件）
-                        "title", "res", "albumArtURI", "class" -> if (inItem) {
+                        "title", "res", "albumArtURI", "class", "date" -> if (inItem) {
                             textTarget = p.name
                             if (p.name == "res" && mime.isEmpty()) {
                                 // protocolInfo="http-get:*:image/jpeg:*" の第3フィールド
@@ -159,12 +163,13 @@ object DlnaClient {
                             "res" -> url += p.text
                             "albumArtURI" -> thumb += p.text
                             "class" -> upnpClass += p.text
+                            "date" -> date += p.text
                         }
                     }
                     XmlPullParser.END_TAG -> when (p.name) {
-                        "title", "res", "albumArtURI", "class" -> textTarget = ""
+                        "title", "res", "albumArtURI", "class", "date" -> textTarget = ""
                         "item", "container" -> {
-                            items.add(DlnaItem(id, title.trim(), url.trim(), thumb.trim(), isContainer, mime, upnpClass.trim()))
+                            items.add(DlnaItem(id, title.trim(), url.trim(), thumb.trim(), isContainer, mime, upnpClass.trim(), date.trim()))
                             inItem = false
                         }
                     }

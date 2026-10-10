@@ -12,8 +12,8 @@ android {
         applicationId = "jp.yuki.a6000transfer"
         minSdk = 29
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.2.2"
+        versionCode = 9
+        versionName = "1.2.3"
     }
 
     buildTypes {
@@ -49,6 +49,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.exifinterface:exifinterface:1.4.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     val cameraX = "1.5.2"
     implementation("androidx.camera:camera-core:$cameraX")
@@ -59,4 +60,5 @@ dependencies {
     implementation("com.google.mlkit:text-recognition:16.0.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.16.1")
 }

@@ -26,6 +26,7 @@ data class Photo(
     val dateTitle: String,
     val kind: MediaKind = MediaKind.PHOTO,
     val mime: String = "",
+    val captureDateHint: String = "",
 )
 
 /** カメラがDLNAで公開するメディア種別（α6000実測: JPEG写真＋MP4動画のみ） */
@@ -208,7 +209,7 @@ object DlnaRepository {
     suspend fun loadTree(context: Context, locationUrl: String, maxDepth: Int = 3): List<DateGroup> {
         val control = controlUrl(context, locationUrl)
         val groups = mutableListOf<DateGroup>()
-        suspend fun walk(oid: String, dateTitle: String, depth: Int) {
+        suspend fun walk(oid: String, dateTitle: String, captureDateHint: String, depth: Int) {
             if (depth > maxDepth) return
             val items = browseAll(context, control, oid)
             // 転送対象は写真・動画のみ。カメラが公開しない種別（RAW等）は対象外
@@ -217,7 +218,8 @@ object DlnaRepository {
                     val kind = classifyMedia(item.mime, item.upnpClass, item.title)
                     if (kind == MediaKind.OTHER) return@mapNotNull null
                     val t = item.title.ifBlank { item.id }
-                    Photo(item.id, t, item.url, "", kind, item.mime)
+                    val itemDate = item.date.takeIf { CaptureDateMetadata.parse(it) != null }
+                    Photo(item.id, t, item.url, "", kind, item.mime, itemDate ?: captureDateHint)
                 }
             if (photos.isNotEmpty()) {
                 val t = dateTitle.ifBlank { context.getString(R.string.dlna_unknown_date) }
@@ -230,10 +232,14 @@ object DlnaRepository {
                 }
             }
             items.filter { it.isContainer }.forEach { c ->
-                walk(c.id, if (c.title.isNotBlank() && dateTitle.isBlank()) c.title else dateTitle.ifBlank { c.title }, depth + 1)
+                val nextDateHint = if (CaptureDateMetadata.parse(c.date) != null) c.date
+                    else if (CaptureDateMetadata.parse(c.title) != null) c.title
+                    else captureDateHint
+                val nextTitle = if (dateTitle.isBlank()) c.title else dateTitle
+                walk(c.id, nextTitle, nextDateHint, depth + 1)
             }
         }
-        walk("0", "", 0)
+        walk("0", "", "", 0)
         return groups
     }
 
@@ -393,72 +399,82 @@ object DlnaRepository {
     suspend fun saveMedia(context: Context, file: File, photo: Photo): Uri? =
         when (photo.kind) {
             MediaKind.VIDEO -> saveVideo(context, file, photo.title)
-            else -> savePhoto(context, file, photo.title, photo.mime)
+            else -> savePhoto(context, file, photo.title, photo.mime, photo.captureDateHint)
         }
 
     /** ギャラリー（DCIM/保存フォルダ）に写真を保存 */
     suspend fun saveToGallery(context: Context, file: File, title: String): Uri? =
-        savePhoto(context, file, title, "image/jpeg")
+        savePhoto(context, file, title, "image/jpeg", "")
 
-    private suspend fun savePhoto(context: Context, file: File, title: String, mime: String): Uri? =
+    private suspend fun savePhoto(context: Context, file: File, title: String, mime: String, dateHint: String): Uri? =
         withContext(Dispatchers.IO) {
-            val lower = title.lowercase()
-            val name = if (lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
-                lower.endsWith(".heic") || lower.endsWith(".heif") || lower.endsWith(".png")
-            ) {
-                title
-            } else {
-                "$title.jpg"
-            }
-            val mimeType = if (mime.lowercase().startsWith("image/")) mime.lowercase() else "image/jpeg"
-            val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, name)
-                put(MediaStore.Images.Media.MIME_TYPE, mimeType)
-                if (Build.VERSION.SDK_INT >= 29) {
-                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/" + saveFolder(context))
-                    put(MediaStore.Images.Media.IS_PENDING, 1)
-                }
-            }
-            val resolver = context.contentResolver
-            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return@withContext null
+            // 画像の撮影日時はMediaStoreの読み取り専用列から設定できない。
+            // 公開前のJPEG一時コピーにEXIF日時とオフセットを揃えてからスキャンさせる。
+            val prepared = CaptureDateMetadata.prepare(file, mime, dateHint)
             try {
-                // ストリーム未取得・バイト不一致は成功扱いにせず破棄する
-                val out = try {
-                    resolver.openOutputStream(uri)
+                val lower = title.lowercase()
+                val name = if (lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
+                    lower.endsWith(".heic") || lower.endsWith(".heif") || lower.endsWith(".png")
+                ) {
+                    title
+                } else {
+                    "$title.jpg"
+                }
+                val mimeType = if (mime.lowercase().startsWith("image/")) mime.lowercase() else "image/jpeg"
+                val values = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                    put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/" + saveFolder(context))
+                        put(MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                }
+                val resolver = context.contentResolver
+                val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return@withContext null
+                try {
+                    // ストリーム未取得・バイト不一致は成功扱いにせず破棄する
+                    val out = try {
+                        resolver.openOutputStream(uri)
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (out == null) {
+                        try {
+                            resolver.delete(uri, null, null)
+                        } catch (_: Exception) {
+                        }
+                        return@withContext null
+                    }
+                    val copied = try {
+                        out.use { o -> prepared.inputStream().use { it.copyTo(o) } }
+                    } catch (_: Exception) {
+                        -1L
+                    }
+                    if (copied != prepared.length()) {
+                        try {
+                            resolver.delete(uri, null, null)
+                        } catch (_: Exception) {
+                        }
+                        return@withContext null
+                    }
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        values.clear()
+                        values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                        if (resolver.update(uri, values, null, null) == 0) {
+                            resolver.delete(uri, null, null)
+                            return@withContext null
+                        }
+                    }
+                    uri
                 } catch (_: Exception) {
+                    try {
+                        resolver.delete(uri, null, null)
+                    } catch (_: Exception) {
+                    }
                     null
                 }
-                if (out == null) {
-                    try {
-                        resolver.delete(uri, null, null)
-                    } catch (_: Exception) {
-                    }
-                    return@withContext null
-                }
-                val copied = try {
-                    out.use { o -> file.inputStream().use { it.copyTo(o) } }
-                } catch (_: Exception) {
-                    -1L
-                }
-                if (copied != file.length()) {
-                    try {
-                        resolver.delete(uri, null, null)
-                    } catch (_: Exception) {
-                    }
-                    return@withContext null
-                }
-                if (Build.VERSION.SDK_INT >= 29) {
-                    values.clear()
-                    values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                    resolver.update(uri, values, null, null)
-                }
-                uri
-            } catch (_: Exception) {
-                try {
-                    resolver.delete(uri, null, null)
-                } catch (_: Exception) {
-                }
-                null
+            } finally {
+                if (prepared != file) prepared.delete()
             }
         }
 

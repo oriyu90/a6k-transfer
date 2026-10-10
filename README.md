@@ -31,6 +31,8 @@ Connect to a Sony α camera's Wi-Fi access point and transfer photos and videos 
   "Saved" labels backed by on-device persistent history plus gallery matching
 - 保存フォルダ指定（設定 → DCIM配下サブフォルダ名）
   Custom save subfolder under DCIM (Settings)
+- JPEGの撮影日時を写真アプリ向けに保持。EXIFを優先し、ない場合はカメラの日時情報を使用します。タイムゾーンがない場合はスマホの設定を使い、日付だけの場合はその日の正午として保存します
+  Preserve JPEG capture dates for photo apps. EXIF takes priority, followed by camera date metadata. When no time zone is available, the phone's time zone is used; a date without a time is saved as noon on that date
 - 固定ポート・固定コンテナIDを持たない探索設計（NOTIFY待受 → LOCATION → Browse → 深さ優先走査）
   Port-free discovery (NOTIFY listen → LOCATION → Browse → depth-first walk)
 
